@@ -780,31 +780,22 @@ mod tests {
         let file = dir.join("Cargo.toml");
 
         let git = Git::new(&dir);
-        fn identity(args: &[&str]) -> Vec<String> {
-            // `-c` rather than a global config: the developer's own git settings
-            // (a signing key, for instance) must not decide whether this passes.
-            let mut full: Vec<String> = [
-                "-c",
-                "user.name=bumpp test",
-                "-c",
-                "user.email=t@example.invalid",
-                "-c",
-                "commit.gpgsign=false",
-                "-c",
-                "tag.gpgsign=false",
-            ]
-            .iter()
-            .map(|arg| arg.to_string())
-            .collect();
-            full.extend(args.iter().map(|arg| arg.to_string()));
-            full
-        }
         let run = |args: &[&str]| {
-            let full = identity(args);
-            let refs: Vec<&str> = full.iter().map(|arg| arg.as_str()).collect();
-            git.run(&refs).unwrap()
+            let output = git.run(args).unwrap();
+            assert!(output.ok(), "git {args:?} failed: {}", output.stderr.trim());
+            output
         };
+
         run(&["init", "--quiet"]);
+        // Identity and signing belong in the repository's own config, not on the
+        // command line: the tool runs `git tag` itself, without any `-c`, so a
+        // machine (or a CI runner) with no global identity would otherwise fail
+        // the tag step rather than the code under test.
+        run(&["config", "user.name", "bumpp test"]);
+        run(&["config", "user.email", "t@example.invalid"]);
+        run(&["config", "commit.gpgsign", "false"]);
+        run(&["config", "tag.gpgsign", "false"]);
+
         std::fs::write(&file, "version = \"0.0.2\"\n").unwrap();
         run(&["add", "--all"]);
         run(&["commit", "--quiet", "--message", "chore: initial"]);
