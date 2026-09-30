@@ -1,0 +1,39 @@
+[package]
+name = "cargo-bumpp"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74"
+description = "Interactive version bumping for Cargo projects: bump the manifest, commit, tag, push"
+license = "MIT"
+repository = "https://github.com/imba97/cargo-bumpp"
+homepage = "https://github.com/imba97/cargo-bumpp"
+keywords = ["cargo", "version", "bump", "release", "semver"]
+categories = ["command-line-utilities", "development-tools::cargo-plugins"]
+readme = "README.md"
+exclude = ["/.github", "/.scratch"]
+
+[lib]
+name = "cargo_bumpp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cargo-bumpp"
+path = "src/bin/cargo-bumpp.rs"
+
+[[bin]]
+name = "bumpp"
+path = "src/bin/bumpp.rs"
+
+# No dependencies, on purpose: `cargo install cargo-bumpp` must be seconds, not
+# minutes. Everything below (semver, the tiny TOML subset, the JSON reader for
+# `cargo metadata`, the terminal handling) is implemented in this crate.
+[dependencies]
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.release.package."*"]
+opt-level = "s"

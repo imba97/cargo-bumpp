@@ -1,0 +1,205 @@
+name: Release
+
+# Publishing is not idempotent: a crate name and version pair can never be
+# reused, and a yanked version cannot be un-yanked. So this workflow is written
+# to refuse rather than to guess, and it is safe to re-run after a partial
+# failure because publishing a version that is already on the registry counts as
+# done rather than as an error.
+
+on:
+  push:
+    # The one and only trigger: `v<major>.<minor>.<patch>` tags, i.e. exactly
+    # the tags `cargo bumpp` creates. Nothing else starts a run, so nothing else
+    # can reach the registry, and the shape of a release tag is enforced here
+    # rather than by a script that has to remember to check it.
+    tags: [ "v*.*.*" ]
+
+# Read-only by default; the publishing job asks for nothing more.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fail any build script or rustc invocation that emits a warning we asked for.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Everything that can be checked without credentials.
+  # ---------------------------------------------------------------------------
+  test:
+    name: Test (${{ matrix.os }})
+    # Unlike a single-target library, this crate talks to Win32 directly (console
+    # mode, screen buffer, local time) and shells out to `stty` on Unix, so all
+    # three platforms are exercised rather than one.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # rust-toolchain.toml is not used on purpose: the MSRV in Cargo.toml
+      # (`rust-version`) is what consumers are promised, so it is checked
+      # separately below rather than being the default toolchain.
+      - name: Install stable toolchain
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Docs
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --locked
+
+      # `cargo package` builds the crate the way crates.io will see it, which is
+      # the closest local equivalent of the publish job. Only worth doing once.
+      - name: Package
+        if: runner.os == 'Linux'
+        run: cargo package --locked
+
+      # The whole point of the crate is that installing it is cheap, so the
+      # dependency tree is asserted to stay empty.
+      - name: No dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tree=$(cargo tree --depth 1 --prefix none 2>/dev/null | grep -v '^cargo-bumpp' || true)
+          if [ -n "$tree" ]; then
+            echo "::error::cargo-bumpp is supposed to have no dependencies, found:"
+            echo "$tree"
+            exit 1
+          fi
+          echo "dependency tree is empty"
+
+  # ---------------------------------------------------------------------------
+  # MSRV. `rust-version = "1.74"` is a promise; without this job it is only a
+  # claim in a manifest.
+  # ---------------------------------------------------------------------------
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read rust-version from the manifest
+        id: msrv
+        run: |
+          set -euo pipefail
+          version=$(python3 -c '
+          import tomllib
+          with open("Cargo.toml", "rb") as f:
+              print(tomllib.load(f)["package"]["rust-version"])')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "MSRV is $version"
+
+      - name: Install MSRV toolchain
+        run: |
+          rustup toolchain install "${{ steps.msrv.outputs.version }}" --profile minimal
+          rustup default "${{ steps.msrv.outputs.version }}"
+
+      # --locked because the committed lockfile is what CI should resolve.
+      # `cargo build` rather than `cargo test` because the tests need nothing
+      # beyond the standard library, so building every target is enough.
+      - name: Build on MSRV
+        run: cargo build --all-targets --locked
+
+  # ---------------------------------------------------------------------------
+  # crates.io. One crate, no dependencies, so there is no dependency order to
+  # respect and no index propagation to wait for.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish to crates.io
+    needs: [ test, msrv ]
+    runs-on: ubuntu-latest
+    # No `if:` needed: a tag push is the only way in, so reaching this job at all
+    # means a release was asked for.
+    #
+    # No `environment:` either, on purpose. Declaring one moves the secret into
+    # environment scope and requires that environment to exist before the first
+    # run, for a gate this project does not need yet; the token is read from
+    # Settings -> Secrets and variables -> Actions instead. To add a manual
+    # approval gate later, create the environment, add `environment: <name>`
+    # back and move the secret into it.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install stable toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Verify the tag matches the manifest
+        run: |
+          set -euo pipefail
+          manifest_version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[0].version')
+          tag_version="${GITHUB_REF_NAME#v}"
+          echo "manifest: $manifest_version"
+          echo "tag:      $tag_version"
+          if [ "$manifest_version" != "$tag_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match the version in Cargo.toml ($manifest_version)"
+            echo "Bump the version, or retag."
+            exit 1
+          fi
+
+      # The token comes from the environment, never from a command line, so it
+      # cannot leak into a log through `cargo` echoing its arguments.
+      - name: Check the token is present
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "::error::the CARGO_REGISTRY_TOKEN secret is empty"
+            echo "Add it under Settings -> Secrets and variables -> Actions,"
+            echo "named exactly CARGO_REGISTRY_TOKEN."
+            exit 1
+          fi
+          echo "token present (${#CARGO_REGISTRY_TOKEN} characters, not printed)"
+
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # `--locked` publishes exactly the dependency set CI tested, instead of
+          # quietly resolving a newer one at release time. There is no
+          # "is it already there?" probe before this: every probe available here
+          # lies (`cargo search` fuzzy-matches, `cargo info` resolves against the
+          # local workspace), so the publish error itself is the only trustworthy
+          # signal and it is what this branches on.
+          if output=$(cargo publish --locked 2>&1); then
+            echo "$output"
+            echo "published"
+          elif grep -qi 'already uploaded\|already exists' <<<"$output"; then
+            # A re-run after a partial release lands here. crates.io never allows
+            # a re-upload, so the version being there already is done, not failed.
+            echo "$output"
+            echo "this version is already on the registry, nothing to do"
+          else
+            echo "$output"
+            echo "::error::publishing failed"
+            exit 1
+          fi
