@@ -1,0 +1,12 @@
+# `cargo bumpp` inside this repository runs the working tree, so the crate can
+# release itself without anyone having to install a snapshot of it first.
+#
+# The trailing `--` matters: without it cargo would parse the arguments itself
+# (`cargo bumpp --help` would print `cargo run --help`).
+#
+# Outside this directory the alias does not exist, and `cargo bumpp` finds the
+# installed binary in ~/.cargo/bin as usual. To install that:
+#
+#   cargo install --path .
+[alias]
+bumpp = "run --quiet --bin bumpp --"

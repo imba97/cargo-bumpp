@@ -499,6 +499,12 @@ cargo fmt      # no rustfmt.toml, so the default style
 cargo clippy --all-targets -- -D warnings
 ```
 
+Inside this repository, `cargo bumpp` runs the working tree rather than an
+installed snapshot — a one-line `[alias]` in
+[`.cargo/config.toml`](.cargo/config.toml) — so the crate can release itself
+without being installed first. Anywhere else, `cargo bumpp` needs
+`cargo install cargo-bumpp` (or `cargo install --path .` from a checkout).
+
 The workflow behind the badge at the top of this file is started by a release tag
 (`v*.*.*`) and nothing else — see [Releasing](#releasing). These three commands
 are the same checks it runs.

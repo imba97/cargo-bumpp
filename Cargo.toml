@@ -10,7 +10,9 @@ homepage = "https://github.com/imba97/cargo-bumpp"
 keywords = ["cargo", "version", "bump", "release", "semver"]
 categories = ["command-line-utilities", "development-tools::cargo-plugins"]
 readme = "README.md"
-exclude = ["/.github", "/.scratch"]
+# `/.cargo` holds a dev-only alias: `cargo bumpp` inside this repository. It has
+# no meaning in a published crate, so it is not shipped.
+exclude = ["/.cargo", "/.github", "/.scratch"]
 
 [lib]
 name = "cargo_bumpp"

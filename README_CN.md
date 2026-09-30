@@ -446,6 +446,11 @@ cargo fmt      # 无 rustfmt.toml，即默认风格
 cargo clippy --all-targets -- -D warnings
 ```
 
+在本仓库里，`cargo bumpp` 跑的是当前工作区而不是装好的快照 ——
+[`.cargo/config.toml`](.cargo/config.toml) 里的一行 `[alias]` —— 所以不用先安装就能用它发布自己。
+出了这个目录，`cargo bumpp` 就需要 `cargo install cargo-bumpp`（或在检出目录里
+`cargo install --path .`）。
+
 顶部徽章对应的 workflow 只由发布 tag（`v*.*.*`）触发，**别的都不触发** ——
 见[发版](#发版)。上面这三条就是它跑的检查。
 
