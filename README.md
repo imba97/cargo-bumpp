@@ -505,9 +505,9 @@ installed snapshot — a one-line `[alias]` in
 without being installed first. Anywhere else, `cargo bumpp` needs
 `cargo install cargo-bumpp` (or `cargo install --path .` from a checkout).
 
-The workflow behind the badge at the top of this file is started by a release tag
-(`v*.*.*`) and nothing else — see [Releasing](#releasing). These three commands
-are the same checks it runs.
+The badge at the top of this file belongs to the pipeline that runs on release
+tags; [`.github/workflows/ci.yaml`](.github/workflows/ci.yaml) holds the checks,
+and these three commands are what they come down to.
 
 The end-to-end tests build real temporary Cargo workspaces and git repositories
 and run the real `cargo metadata` and `git commit`, covering rollback, a failed
@@ -515,25 +515,6 @@ push, a dirty tree, a missing TTY, a refusing pre-commit hook and a signing
 failure. Their git configuration is fully isolated in temporary files
 (`GIT_CONFIG_GLOBAL` / `GIT_CONFIG_SYSTEM`), so your own git settings are never
 read or changed — and no GPG prompt can appear.
-
-### Releasing
-
-This crate is released with itself, because that is the workflow it was built for:
-
-1. On a clean tree, run `cargo bumpp`: it rewrites `Cargo.toml` (and
-   `Cargo.lock`), commits, tags and pushes.
-2. The pushed tag triggers
-   [`.github/workflows/release.yaml`](.github/workflows/release.yaml). Only
-   `v<major>.<minor>.<patch>` tags get past the trigger, so `v2` or `v-next`
-   cannot reach the registry by accident; the tag then has to match the version
-   in `Cargo.toml`, and only then does the job run `cargo publish --locked`.
-3. That job needs a repository secret `CARGO_REGISTRY_TOKEN` — a crates.io API
-   token with publish scope. It is checked for emptiness first, so a missing
-   secret says so instead of surfacing as a confusing cargo error.
-
-There is no manual trigger and no dry-run switch: a release starts only by pushing
-a tag. Re-running the workflow from the Actions tab is safe, though — a version
-that is already on the registry counts as published, not as a failure.
 
 Where the code lives:
 

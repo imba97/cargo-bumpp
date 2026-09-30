@@ -5,6 +5,9 @@ name: Release
 # to refuse rather than to guess, and it is safe to re-run after a partial
 # failure because publishing a version that is already on the registry counts as
 # done rather than as an error.
+#
+# The checks live in ci.yaml, which this workflow calls. Keeping them in one run
+# is what makes the order structural.
 
 on:
   push:
@@ -18,120 +21,14 @@ on:
 permissions:
   contents: read
 
-env:
-  CARGO_TERM_COLOR: always
-  # Fail any build script or rustc invocation that emits a warning we asked for.
-  RUSTFLAGS: -D warnings
-
 jobs:
-  # ---------------------------------------------------------------------------
-  # Everything that can be checked without credentials.
-  # ---------------------------------------------------------------------------
-  test:
-    name: Test (${{ matrix.os }})
-    # Unlike a single-target library, this crate talks to Win32 directly (console
-    # mode, screen buffer, local time) and shells out to `stty` on Unix, so all
-    # three platforms are exercised rather than one.
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-
-      # rust-toolchain.toml is not used on purpose: the MSRV in Cargo.toml
-      # (`rust-version`) is what consumers are promised, so it is checked
-      # separately below rather than being the default toolchain.
-      - name: Install stable toolchain
-        shell: bash
-        run: |
-          rustup toolchain install stable --profile minimal --component clippy,rustfmt
-          rustup default stable
-          rustc --version
-          cargo --version
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Check formatting
-        run: cargo fmt --all --check
-
-      - name: Clippy
-        run: cargo clippy --all-targets --locked
-
-      # The macOS runner image happens to ship a global git identity while the
-      # Linux and Windows ones do not, so a test that quietly needs one fails on
-      # two platforms and passes on the third. Taking the identity away here
-      # makes the condition the same everywhere, and makes it fail here rather
-      # than on somebody's release.
-      - name: Drop the runner's git identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config --global --unset-all user.name || true
-          git config --global --unset-all user.email || true
-          echo "global identity: name='$(git config --global --get user.name || true)' email='$(git config --global --get user.email || true)'"
-
-      - name: Test
-        run: cargo test --locked
-
-      - name: Docs
-        env:
-          RUSTDOCFLAGS: -D warnings
-        run: cargo doc --no-deps --locked
-
-      # `cargo package` builds the crate the way crates.io will see it, which is
-      # the closest local equivalent of the publish job. Only worth doing once.
-      - name: Package
-        if: runner.os == 'Linux'
-        run: cargo package --locked
-
-      # The whole point of the crate is that installing it is cheap, so the
-      # dependency tree is asserted to stay empty.
-      - name: No dependencies
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          tree=$(cargo tree --depth 1 --prefix none 2>/dev/null | grep -v '^cargo-bumpp' || true)
-          if [ -n "$tree" ]; then
-            echo "::error::cargo-bumpp is supposed to have no dependencies, found:"
-            echo "$tree"
-            exit 1
-          fi
-          echo "dependency tree is empty"
-
-  # ---------------------------------------------------------------------------
-  # MSRV. `rust-version = "1.74"` is a promise; without this job it is only a
-  # claim in a manifest.
-  # ---------------------------------------------------------------------------
-  msrv:
-    name: MSRV
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Read rust-version from the manifest
-        id: msrv
-        run: |
-          set -euo pipefail
-          version=$(python3 -c '
-          import tomllib
-          with open("Cargo.toml", "rb") as f:
-              print(tomllib.load(f)["package"]["rust-version"])')
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "MSRV is $version"
-
-      - name: Install MSRV toolchain
-        run: |
-          rustup toolchain install "${{ steps.msrv.outputs.version }}" --profile minimal
-          rustup default "${{ steps.msrv.outputs.version }}"
-
-      # --locked because the committed lockfile is what CI should resolve.
-      # `cargo build` rather than `cargo test` because the tests need nothing
-      # beyond the standard library, so building every target is enough.
-      - name: Build on MSRV
-        run: cargo build --all-targets --locked
+  # Everything that can be checked without credentials: formatting, clippy, the
+  # test suite on three platforms, rustdoc, `cargo package`, the empty
+  # dependency tree, and the MSRV build. Calling the whole file means publish
+  # waits for every job in it, matrix included, without listing them here.
+  checks:
+    name: Checks
+    uses: ./.github/workflows/ci.yaml
 
   # ---------------------------------------------------------------------------
   # crates.io. One crate, no dependencies, so there is no dependency order to
@@ -139,10 +36,10 @@ jobs:
   # ---------------------------------------------------------------------------
   publish:
     name: Publish to crates.io
-    needs: [ test, msrv ]
+    needs: [ checks ]
     runs-on: ubuntu-latest
     # No `if:` needed: a tag push is the only way in, so reaching this job at all
-    # means a release was asked for.
+    # means a release was asked for, and `needs` means the checks have passed.
     #
     # No `environment:` either, on purpose. Declaring one moves the secret into
     # environment scope and requires that environment to exist before the first
@@ -160,7 +57,10 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
 
-      - uses: Swatinem/rust-cache@v2
+      # No `rust-cache` in this job on purpose. It has no dependencies to cache,
+      # `cargo publish` verifies the crate in seconds, and restoring the test
+      # job's cache is what made this job report cleanup errors about a
+      # `target/package/` tree it never created.
 
       - name: Verify the tag matches the manifest
         run: |

@@ -451,29 +451,13 @@ cargo clippy --all-targets -- -D warnings
 出了这个目录，`cargo bumpp` 就需要 `cargo install cargo-bumpp`（或在检出目录里
 `cargo install --path .`）。
 
-顶部徽章对应的 workflow 只由发布 tag（`v*.*.*`）触发，**别的都不触发** ——
-见[发版](#发版)。上面这三条就是它跑的检查。
+顶部徽章属于那条只在发布 tag 上运行的流水线；检查本身在
+[`.github/workflows/ci.yaml`](.github/workflows/ci.yaml) 里，内容就是上面这三条命令。
 
 端到端测试会真的建临时 Cargo workspace 和 git 仓库，跑真的 `cargo metadata`、真的
 `git commit`，覆盖回滚、push 失败、脏工作区、无 TTY、pre-commit hook 拒绝、签名失败等路径。
 测试用的 git 配置全部隔离在临时文件里（`GIT_CONFIG_GLOBAL` / `GIT_CONFIG_SYSTEM`），
 不会读也不会改你机器上的配置 —— 也因此不会弹出任何 GPG 窗口。
-
-### 发版
-
-这个 crate 用自己发自己 —— 它本来就是为这条流程写的：
-
-1. 在干净的工作区跑 `cargo bumpp`：它改写 `Cargo.toml`（和 `Cargo.lock`）、提交、打 tag、推送。
-2. 推上去的 tag 触发
-   [`.github/workflows/release.yaml`](.github/workflows/release.yaml)。只有
-   `v<major>.<minor>.<patch>` 形状的 tag 能过触发器，所以 `v2`、`v-next` 这类 tag 不会误发到
-   registry；过了触发器还要与 `Cargo.toml` 里的版本一致，之后才 `cargo publish --locked`。
-3. 这个 job 需要仓库 secret `CARGO_REGISTRY_TOKEN`（一个有 publish 权限的 crates.io API token）。
-   它会先检查这个 secret 是否为空，所以漏配时报的是「secret 是空的」，而不是一条看不懂的
-   cargo 报错。
-
-没有手动触发，也没有干跑开关：只有推 tag 才会开始。不过在 Actions 页面点
-「Re-run all jobs」重跑是安全的 —— 版本已经在 registry 上算「已完成」，不算失败。
 
 代码结构：
 

@@ -1,0 +1,148 @@
+name: Checks
+
+# The checks a release has to pass. This file has no trigger of its own: the
+# only way to run it is to call it, from release.yaml.
+#
+# That is what makes "do not publish until everything passes" structural rather
+# than a matter of timing. `workflow_run` could also make two separate workflows
+# wait for one another, but it runs in a *second* run, from the copy of the file
+# on the default branch, and the tag would have to be plumbed through by hand.
+# As a reusable workflow this is just `needs:` inside one run.
+on:
+  workflow_call:
+
+# Read-only: nothing here needs to write anything back.
+permissions:
+  contents: read
+
+# Declared here as well as in the caller: a workflow's own `env` is not passed
+# on to a workflow it calls.
+env:
+  CARGO_TERM_COLOR: always
+  # Fail any build script or rustc invocation that emits a warning we asked for.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    # Unlike a single-target library, this crate talks to Win32 directly (console
+    # mode, screen buffer, local time) and shells out to `stty` on Unix, so all
+    # three platforms are exercised rather than one.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # rust-toolchain.toml is not used on purpose: the MSRV in Cargo.toml
+      # (`rust-version`) is what consumers are promised, so it is checked
+      # separately below rather than being the default toolchain.
+      - name: Install stable toolchain
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      # A cache saved by an earlier run carries the `target/package/` tree that
+      # `cargo package` used to leave behind, and the cache action's post-job
+      # cleanup then fails on it with `ENOENT ... opendir .../tests/target`.
+      # Restoring is enough to inherit it, which is why the publish job -- that
+      # never packages anything -- reported the same paths. Dropping the tree
+      # here means the cache saved by this run no longer has it.
+      - name: Drop a stale packaged tree from the cache
+        shell: bash
+        run: |
+          rm -rf target/package
+          test ! -e target/package
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked
+
+      # The macOS runner image happens to ship a global git identity while the
+      # Linux and Windows ones do not, so a test that quietly needs one fails on
+      # two platforms and passes on the third. Taking the identity away here
+      # makes the condition the same everywhere, and makes it fail here rather
+      # than on somebody's release.
+      - name: Drop the runner's git identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --unset-all user.name || true
+          git config --global --unset-all user.email || true
+          echo "global identity: name='$(git config --global --get user.name || true)' email='$(git config --global --get user.email || true)'"
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Docs
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --locked
+
+      # `cargo package` verifies the crate by extracting and rebuilding it under
+      # `<target>/package/`. The cache action walks `target/` again in its
+      # post-job cleanup and trips over that tree (`ENOENT ... opendir
+      # target/package/<pkg>/tests/...`), which is noise on an otherwise green
+      # job. A target directory of its own keeps the cached `target/` clear of
+      # it -- and keeps the verify build out of the cache, where it has no use.
+      - name: Package
+        if: runner.os == 'Linux'
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/package-target
+        run: cargo package --locked
+
+      # The whole point of the crate is that installing it is cheap, so the
+      # dependency tree is asserted to stay empty.
+      - name: No dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tree=$(cargo tree --depth 1 --prefix none 2>/dev/null | grep -v '^cargo-bumpp' || true)
+          if [ -n "$tree" ]; then
+            echo "::error::cargo-bumpp is supposed to have no dependencies, found:"
+            echo "$tree"
+            exit 1
+          fi
+          echo "dependency tree is empty"
+
+  # ---------------------------------------------------------------------------
+  # MSRV. `rust-version = "1.74"` is a promise; without this job it is only a
+  # claim in a manifest.
+  # ---------------------------------------------------------------------------
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read rust-version from the manifest
+        id: msrv
+        run: |
+          set -euo pipefail
+          version=$(python3 -c '
+          import tomllib
+          with open("Cargo.toml", "rb") as f:
+              print(tomllib.load(f)["package"]["rust-version"])')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "MSRV is $version"
+
+      - name: Install MSRV toolchain
+        run: |
+          rustup toolchain install "${{ steps.msrv.outputs.version }}" --profile minimal
+          rustup default "${{ steps.msrv.outputs.version }}"
+
+      # --locked because the committed lockfile is what CI should resolve.
+      # `cargo build` rather than `cargo test` because the tests need nothing
+      # beyond the standard library, so building every target is enough.
+      - name: Build on MSRV
+        run: cargo build --all-targets --locked
