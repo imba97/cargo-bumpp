@@ -59,6 +59,19 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --locked
 
+      # The macOS runner image happens to ship a global git identity while the
+      # Linux and Windows ones do not, so a test that quietly needs one fails on
+      # two platforms and passes on the third. Taking the identity away here
+      # makes the condition the same everywhere, and makes it fail here rather
+      # than on somebody's release.
+      - name: Drop the runner's git identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --unset-all user.name || true
+          git config --global --unset-all user.email || true
+          echo "global identity: name='$(git config --global --get user.name || true)' email='$(git config --global --get user.email || true)'"
+
       - name: Test
         run: cargo test --locked
 
