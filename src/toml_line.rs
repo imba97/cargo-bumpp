@@ -58,7 +58,10 @@ pub enum Value {
     },
     Bool(bool),
     Integer(i64),
-    Bare(String),
+    Bare {
+        text: String,
+        inner: (usize, usize),
+    },
     Array,
     /// An inline table. `closed` is false when it continues on later lines, in
     /// which case the entries seen here are still usable.
@@ -383,8 +386,16 @@ fn collect_fields(decl: &mut DepDecl, fields: &[KeyValue], closed: bool) {
                 _ => decl.issue = Some("`version` is not a string".to_string()),
             },
             "path" => {
-                if let Value::Str { text, .. } = &field.value {
-                    decl.path = Some(text.clone());
+                let text = match &field.value {
+                    Value::Str { text, .. } => Some(text.as_str()),
+                    // Bare paths like `path = /usr/local/lib` are legal TOML;
+                    // accepting them keeps an unquoted path from being dropped
+                    // silently.
+                    Value::Bare { text, .. } => Some(text.as_str()),
+                    _ => None,
+                };
+                if let Some(text) = text {
+                    decl.path = Some(text.to_string());
                 }
             }
             "workspace" if field.value.as_bool() == Some(true) => decl.uses_workspace = true,
@@ -583,14 +594,18 @@ impl<'a> Scanner<'a> {
                     }
                     self.advance(1);
                 }
-                let raw = self.text[start..self.pos].trim_end().to_string();
-                match raw.as_str() {
+                let raw = self.text[start..self.pos].trim_end();
+                let bare_end = start + raw.len();
+                match raw {
                     "true" => Value::Bool(true),
                     "false" => Value::Bool(false),
                     "" => Value::Unsupported("no value".to_string()),
                     other => match other.parse::<i64>() {
                         Ok(number) => Value::Integer(number),
-                        Err(_) => Value::Bare(raw),
+                        Err(_) => Value::Bare {
+                            text: other.to_string(),
+                            inner: (start, bare_end),
+                        },
                     },
                 }
             }
@@ -1071,6 +1086,17 @@ bar = { path = "../bar" }
         assert_eq!(decls.len(), 1);
         assert_eq!(decls[0].version.as_ref().unwrap().text, "1.2.3");
         assert_eq!(decls[0].path, None);
+    }
+
+    #[test]
+    fn unquoted_paths_are_recognised_as_paths() {
+        // Bare paths are legal TOML; without this, `path = /usr/local/lib`
+        // would be silently dropped from path-dependency discovery.
+        let text = "[dependencies]\nfoo = { path = ../foo, version = \"0.0.2\" }\n";
+        let decls = manifest(text).dependency_decls();
+        assert_eq!(decls.len(), 1);
+        assert_eq!(decls[0].path.as_deref(), Some("../foo"), "{decls:?}");
+        assert_eq!(decls[0].version.as_ref().unwrap().text, "0.0.2");
     }
 
     #[test]
