@@ -126,7 +126,7 @@ pub fn run(args: &[String], cwd: &Path, injected: Option<&mut dyn Prompt>) -> Re
     // The level as asked for, before `conventional` becomes concrete: that is
     // what `{releaseType}` reports, and what decides whether the commit log is
     // worth printing.
-    let release_type = level.as_token().to_string();
+    let release_type = level.as_token();
     let asked_conventional = level.is_conventional();
     let level = prompt::resolve_level(&level, &current, conventional_level);
 
@@ -136,14 +136,14 @@ pub fn run(args: &[String], cwd: &Path, injected: Option<&mut dyn Prompt>) -> Re
                 &ui,
                 &analysis.range,
                 &analysis.commits,
-                release_type.as_str(),
+                release_type,
                 analysis.truncated,
             );
         }
     }
 
     let plan = plan::build(&workspace, &options, &level)?;
-    let git_summary = git_summary(&git, &options, &plan, &release_type)?;
+    let git_summary = git_summary(&git, &options, &plan, release_type)?;
 
     for warning in &plan.warnings {
         ui.warn(warning);
@@ -257,7 +257,7 @@ fn apply(
             &message,
             crate::git::CommitOptions {
                 sign: options.sign,
-                unsigned: options.unsigned,
+                unsigned: options.explicit_no_sign,
                 verify: options.verify,
                 all: options.all,
             },
@@ -271,7 +271,7 @@ fn apply(
             let message = git.commit_message.clone().unwrap_or_else(|| tag.clone());
             transaction
                 .git
-                .tag(tag, &message, options.sign, options.unsigned)?;
+                .tag(tag, &message, options.sign, options.explicit_no_sign)?;
             transaction.tag = Some(tag.clone());
             ui.info(format!("  {} {}", ui.dim("   tag"), tag));
         }

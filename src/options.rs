@@ -97,7 +97,7 @@ pub struct Options {
     pub sign: bool,
     /// `--no-sign` was given explicitly: skip signing even when git is
     /// configured to sign every commit and tag.
-    pub unsigned: bool,
+    pub explicit_no_sign: bool,
     pub push: bool,
     pub yes: bool,
     pub recursive: bool,
@@ -198,7 +198,7 @@ impl Options {
             tag,
             tag_name: raw.tag_name.unwrap_or_else(|| DEFAULT_TAG_NAME.to_string()),
             sign: raw.sign.unwrap_or(false),
-            unsigned: raw.sign == Some(false),
+            explicit_no_sign: raw.sign == Some(false),
             push,
             yes: raw.yes.unwrap_or(false),
             recursive: raw.recursive.unwrap_or(false),
@@ -309,17 +309,17 @@ mod tests {
                 ..raw()
             })
             .unwrap()
-            .unsigned
+            .explicit_no_sign
         );
         // Not mentioned: git's own `commit.gpgsign` decides.
-        assert!(!Options::resolve(raw()).unwrap().unsigned);
+        assert!(!Options::resolve(raw()).unwrap().explicit_no_sign);
         assert!(
             !Options::resolve(RawOptions {
                 sign: Some(true),
                 ..raw()
             })
             .unwrap()
-            .unsigned
+            .explicit_no_sign
         );
     }
 

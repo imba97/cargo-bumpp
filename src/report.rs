@@ -96,6 +96,13 @@ pub struct GitSummary {
     pub branch: Option<String>,
 }
 
+impl GitSummary {
+    /// True when a push step will run.
+    pub fn will_push(&self) -> bool {
+        self.push.is_some()
+    }
+}
+
 /// Print the plan: where it runs, what it bumps, and every line it touches.
 pub fn print_plan(ui: &Ui, plan: &Plan, command: &str, git: &GitSummary) {
     if ui.quiet {
@@ -178,8 +185,10 @@ pub fn print_plan(ui: &Ui, plan: &Plan, command: &str, git: &GitSummary) {
         Some(tag) => println!("  {}  {}", ui.dim("   tag"), tag),
         None => println!("  {}  {}", ui.dim("   tag"), ui.dim("no")),
     }
-    match &git.push {
-        Some(remote) => match &git.branch {
+    if git.will_push() {
+        // `git.push` is `Some(remote)` here; the `if` above guarantees it.
+        let remote = git.push.as_deref().unwrap_or("");
+        match &git.branch {
             Some(branch) => println!(
                 "  {}  {} {} and {}",
                 ui.dim("  push"),
@@ -188,8 +197,9 @@ pub fn print_plan(ui: &Ui, plan: &Plan, command: &str, git: &GitSummary) {
                 git.tag.as_deref().unwrap_or("-")
             ),
             None => println!("  {}  {}", ui.dim("  push"), remote),
-        },
-        None => println!("  {}  {}", ui.dim("  push"), ui.dim("no")),
+        }
+    } else {
+        println!("  {}  {}", ui.dim("  push"), ui.dim("no"));
     }
     println!();
 }
@@ -215,7 +225,7 @@ pub fn confirmation_text(ui: &Ui, plan: &Plan, git: &GitSummary) -> String {
         Some(tag) => text.push_str(&format!("     tag {tag}\n")),
         None => text.push_str("     tag (none)\n"),
     }
-    match &git.push {
+    match &git.push.as_deref() {
         Some(remote) => text.push_str(&format!("    push yes ({remote})\n")),
         None => text.push_str("    push no\n"),
     }

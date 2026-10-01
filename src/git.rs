@@ -286,8 +286,7 @@ impl Git {
             Ok(output) if output.ok()
         )
     }
-
-    }
+}
 
 /// Knobs for [`Git::commit`].
 #[derive(Debug, Clone, Copy)]

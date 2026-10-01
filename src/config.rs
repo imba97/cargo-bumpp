@@ -163,11 +163,10 @@ pub fn parse(text: &str) -> Result<RawOptions> {
         let Some((key, value)) = content.split_once('=') else {
             return Err(config_error(line_number, "expected `key = value`"));
         };
-        let key = key
-            .trim()
-            .trim_matches('"')
-            .trim_matches('\'')
-            .replace('_', "-");
+        // Keys may carry surrounding quotes; snake-case spellings are accepted as
+        // aliases for the kebab-case ones, so `commit_message` and
+        // `commit-message` both reach the same spec.
+        let key = normalise_key(key);
         let value = value.trim();
         if value.is_empty() {
             return Err(config_error(line_number, "missing value"));
@@ -260,6 +259,15 @@ fn set_string(raw: &mut RawOptions, key: &str, value: String) {
         "preid" => raw.preid = Some(value),
         other => unreachable!("unhandled string key `{other}`"),
     }
+}
+
+/// Strip surrounding quotes and turn snake-case into kebab-case, so a config
+/// file can use either spelling (`commit_message` or `commit-message`).
+fn normalise_key(key: &str) -> String {
+    key.trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .replace('_', "-")
 }
 
 /// Remove a `#` comment, ignoring `#` inside a quoted string.
