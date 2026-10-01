@@ -69,6 +69,25 @@ impl Ui {
         }
     }
 
+    /// Width reserved for the label column in the `apply` stage's progress lines:
+    /// every label is padded to this many characters so the values line up.
+    pub const APPLY_LABEL_WIDTH: usize = 7;
+
+    /// One progress line: `label  value`, with the label dimmed. Every line in
+    /// the `apply` stage goes through here so the labels align.
+    ///
+    /// `label` is left-padded with spaces to
+    /// [`APPLY_LABEL_WIDTH`](Self::APPLY_LABEL_WIDTH); the dim styling wraps
+    /// the padded form so the value column starts at the same byte on every
+    /// line.
+    pub fn step(&self, label: &str, value: impl AsRef<str>) {
+        if self.quiet {
+            return;
+        }
+        let line = format_step_line(self, label, value.as_ref());
+        println!("{line}");
+    }
+
     /// A blank line, hidden by `--quiet`.
     pub fn blank(&self) {
         if !self.quiet {
@@ -262,6 +281,13 @@ pub fn confirmation_text(ui: &Ui, plan: &Plan, git: &GitSummary) -> String {
     text
 }
 
+/// Build one progress line so the `apply` stage's labels line up. The label is
+/// right-padded with spaces, dim-styled, then the value follows.
+fn format_step_line(ui: &Ui, label: &str, value: &str) -> String {
+    let padded = format!("{label:<width$}", width = Ui::APPLY_LABEL_WIDTH);
+    format!("  {} {}", ui.dim(&padded), value)
+}
+
 /// The commits `conventional` looked at.
 pub fn print_commits(
     ui: &Ui,
@@ -403,6 +429,35 @@ mod tests {
         assert!(
             confirm.contains("    from \u{1b}[1m0.0.2\u{1b}[0m"),
             "the `from` line should be bold: {confirm:?}"
+        );
+    }
+
+    #[test]
+    fn step_lines_align_their_values() {
+        // Every label in the `apply` stage fits within
+        // `APPLY_LABEL_WIDTH`; once padded the values share a column.
+        let ui = Ui::new(false, false);
+
+        let short = format_step_line(&ui, "tag", "v1.0");
+        let long_ = format_step_line(&ui, "updated", "Cargo.lock");
+
+        // Without colour escapes (Ui::new(_, false)), the padded labels read
+        // exactly as: `tag<two spaces>v1.0`, `updated<v1.0`.
+        assert_eq!(
+            short, "  tag     v1.0",
+            "short label padded to width: {short:?}"
+        );
+        assert_eq!(
+            long_, "  updated Cargo.lock",
+            "long label needs no padding: {long_:?}"
+        );
+
+        // The value column starts at the same byte on both lines.
+        let value_col_short = short.find("v1.0").unwrap();
+        let value_col_long = long_.find("Cargo.lock").unwrap();
+        assert_eq!(
+            value_col_short, value_col_long,
+            "values must align: {short:?} vs {long_:?}"
         );
     }
 }

@@ -220,21 +220,17 @@ fn apply(
     ui: &Ui,
 ) -> Result<()> {
     if plan.files.is_empty() {
-        ui.info(format!("  {} no file changes", ui.dim("files")));
+        ui.step("files", "no file changes");
     }
     for file in &plan.files {
         std::fs::write(&file.path, &file.new_text)
             .map_err(|err| Error::io(format!("cannot write `{}`: {err}", file.path.display())))?;
-        ui.info(format!("  {} {}", ui.dim("wrote"), file.display));
+        ui.step("wrote", &file.display);
     }
 
     if let Some(lockfile) = &plan.lockfile {
         cargo_update_workspace(&workspace.root, ui)?;
-        ui.info(format!(
-            "  {} {}",
-            ui.dim("updated"),
-            display_path(&workspace.root, lockfile)
-        ));
+        ui.step("updated", display_path(&workspace.root, lockfile));
     }
 
     if let Some(command) = &options.execute {
@@ -263,7 +259,7 @@ fn apply(
             },
         )?;
         transaction.committed = true;
-        ui.info(format!("  {} {}", ui.dim("commit"), message));
+        ui.step("commit", &message);
     }
 
     if options.tag {
@@ -273,7 +269,7 @@ fn apply(
                 .git
                 .tag(tag, &message, options.sign, options.explicit_no_sign)?;
             transaction.tag = Some(tag.clone());
-            ui.info(format!("  {} {}", ui.dim("   tag"), tag));
+            ui.step("tag", tag);
         }
     }
 
@@ -295,12 +291,8 @@ fn apply(
         if let Some(tag) = &git.tag {
             what.push(tag.clone());
         }
-        ui.info(format!(
-            "  {} {} {}",
-            ui.dim("  push"),
-            remote,
-            what.join(", ")
-        ));
+        let push_text = format!("{remote} {}", what.join(", "));
+        ui.step("push", &push_text);
     }
 
     Ok(())
@@ -330,7 +322,7 @@ fn push(git: &Git, remote: &str, refspec: &str) -> Result<()> {
 
 /// `cargo update --workspace`: refresh the lockfile entries of the members.
 fn cargo_update_workspace(root: &Path, ui: &Ui) -> Result<()> {
-    ui.info(format!("  {} cargo update --workspace", ui.dim("   run")));
+    ui.step("ran", "cargo update --workspace");
     let output = Command::new("cargo")
         .args(["update", "--workspace"])
         .current_dir(root)
@@ -352,7 +344,7 @@ fn cargo_update_workspace(root: &Path, ui: &Ui) -> Result<()> {
 
 /// `-x, --execute`: run the command with the shell, like the reference does.
 fn run_execute(ui: &Ui, command: &str, cwd: &Path) -> Result<()> {
-    ui.info(format!("  {} {command}", ui.dim("   run")));
+    ui.step("ran", command);
     let mut shell = if cfg!(windows) {
         Command::new("cmd")
     } else {
