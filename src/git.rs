@@ -287,11 +287,7 @@ impl Git {
         )
     }
 
-    /// The most recent commits, newest first.
-    pub fn recent_commits(&self, window: usize) -> Result<Vec<Commit>> {
-        self.commits("HEAD", window)
     }
-}
 
 /// Knobs for [`Git::commit`].
 #[derive(Debug, Clone, Copy)]

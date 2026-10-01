@@ -212,15 +212,6 @@ impl Manifest {
         })
     }
 
-    /// True when the `[package]` table inherits its version from the workspace.
-    pub fn package_inherits_version(&self) -> bool {
-        self.entries().into_iter().any(|entry| {
-            entry.section_path == ["package"]
-                && entry.item.parts == ["version", "workspace"]
-                && entry.item.value.as_bool() == Some(true)
-        })
-    }
-
     /// Every dependency declaration in the file, across `[dependencies]`,
     /// `[dev-dependencies]`, `[build-dependencies]`, `[workspace.dependencies]`
     /// and their `[target.'cfg(..)'.dependencies]` / `[dependencies.foo]` forms.
@@ -931,7 +922,6 @@ b = { path = "../b", version = "0.0.2" }
 "#;
         let doc = manifest(text);
         assert!(doc.package_version().is_none());
-        assert!(doc.package_inherits_version());
         let decls = doc.dependency_decls();
         assert_eq!(decls.len(), 1);
         assert_eq!(decls[0].path.as_deref(), Some("../b"));

@@ -176,7 +176,7 @@ pub fn run(args: &[String], cwd: &Path, injected: Option<&mut dyn Prompt>) -> Re
     }
 
     // ------------------------------------------------------------- the run
-    let mut transaction = Transaction::new(&git, workspace.root.clone());
+    let mut transaction = Transaction::new(&git);
     for file in &plan.files {
         transaction.snapshot(&file.path)?;
     }
@@ -566,7 +566,6 @@ fn is_breaking(commit: &Commit) -> bool {
 /// The state needed to undo a run that failed before the push.
 struct Transaction {
     git: Git,
-    root: PathBuf,
     snapshots: Vec<(PathBuf, Option<String>)>,
     /// The commit HEAD pointed at when the run started.
     head: Option<String>,
@@ -575,10 +574,9 @@ struct Transaction {
 }
 
 impl Transaction {
-    fn new(git: &Git, root: PathBuf) -> Transaction {
+    fn new(git: &Git) -> Transaction {
         Transaction {
             git: git.clone(),
-            root,
             snapshots: Vec::new(),
             head: None,
             committed: false,
@@ -676,7 +674,6 @@ impl Transaction {
                 }
             }
         }
-        let _ = &self.root;
         problems
     }
 }
@@ -747,7 +744,7 @@ mod tests {
         std::fs::write(&file, "version = \"0.0.2\"\n").unwrap();
 
         let git = Git::new(&dir);
-        let mut tx = Transaction::new(&git, dir.clone());
+        let mut tx = Transaction::new(&git);
         tx.snapshot(&file).unwrap();
         tx.snapshot(&dir.join("Cargo.lock")).unwrap();
         assert!(tx.changed_paths().is_empty());
@@ -801,7 +798,7 @@ mod tests {
         run(&["commit", "--quiet", "--message", "chore: initial"]);
         let head = git.head().unwrap();
 
-        let mut tx = Transaction::new(&git, dir.clone());
+        let mut tx = Transaction::new(&git);
         tx.snapshot(&file).unwrap();
         tx.head = Some(head.clone());
 
