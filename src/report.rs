@@ -52,6 +52,16 @@ impl Ui {
         self.paint("36", text.as_ref())
     }
 
+    /// Bold + green: a version or value the run is about to land on.
+    pub fn bold_green(&self, text: impl AsRef<str>) -> String {
+        self.paint("1;32", text.as_ref())
+    }
+
+    /// Bold + cyan: a positive confirmation (`yes`, a URL).
+    pub fn bold_cyan(&self, text: impl AsRef<str>) -> String {
+        self.paint("1;36", text.as_ref())
+    }
+
     /// Ordinary progress output — hidden by `--quiet`.
     pub fn info(&self, text: impl AsRef<str>) {
         if !self.quiet {
@@ -128,7 +138,7 @@ pub fn print_plan(ui: &Ui, plan: &Plan, command: &str, git: &GitSummary) {
                     "  {:<24} {} -> {}",
                     bump.name,
                     bump.old,
-                    ui.bold(bump.new.to_string())
+                    ui.bold_green(bump.new.to_string())
                 );
             } else {
                 println!("  {:<24} {} (unchanged)", bump.name, bump.old);
@@ -138,7 +148,7 @@ pub fn print_plan(ui: &Ui, plan: &Plan, command: &str, git: &GitSummary) {
         println!(
             "  {} -> {}",
             plan.old_version,
-            ui.bold(plan.new_version.to_string())
+            ui.bold_green(plan.new_version.to_string())
         );
     }
     println!();
@@ -163,7 +173,7 @@ pub fn print_plan(ui: &Ui, plan: &Plan, command: &str, git: &GitSummary) {
                 edit.label,
                 edit.line + 1,
                 edit.old,
-                ui.bold(&edit.new),
+                ui.bold_green(&edit.new),
                 width = label_width
             );
         }
@@ -178,25 +188,28 @@ pub fn print_plan(ui: &Ui, plan: &Plan, command: &str, git: &GitSummary) {
 
     println!();
     match &git.commit_message {
-        Some(message) => println!("  {}  {}", ui.dim("commit"), message),
+        Some(message) => println!("  {}  {}", ui.dim("commit"), ui.bold(message)),
         None => println!("  {}  {}", ui.dim("commit"), ui.dim("no")),
     }
     match &git.tag {
-        Some(tag) => println!("  {}  {}", ui.dim("   tag"), tag),
+        Some(tag) => println!("  {}  {}", ui.dim("   tag"), ui.bold(tag)),
         None => println!("  {}  {}", ui.dim("   tag"), ui.dim("no")),
     }
     if git.will_push() {
         // `git.push` is `Some(remote)` here; the `if` above guarantees it.
         let remote = git.push.as_deref().unwrap_or("");
         match &git.branch {
-            Some(branch) => println!(
-                "  {}  {} {} and {}",
-                ui.dim("  push"),
-                remote,
-                branch,
-                git.tag.as_deref().unwrap_or("-")
-            ),
-            None => println!("  {}  {}", ui.dim("  push"), remote),
+            Some(branch) => {
+                let tag = git.tag.as_deref().unwrap_or("-");
+                println!(
+                    "  {}  {} {} and {}",
+                    ui.dim("  push"),
+                    remote,
+                    branch,
+                    ui.bold(tag)
+                );
+            }
+            None => println!("  {}  {}", ui.dim("  push"), ui.bold(remote)),
         }
     } else {
         println!("  {}  {}", ui.dim("  push"), ui.dim("no"));
@@ -211,22 +224,22 @@ pub fn confirmation_text(ui: &Ui, plan: &Plan, git: &GitSummary) -> String {
     } else {
         plan.files
             .iter()
-            .map(|file| file.display.clone())
+            .map(|file| ui.bold(&file.display))
             .collect::<Vec<_>>()
             .join(" ")
     };
     let mut text = String::new();
     text.push_str(&format!("\n   files {files}\n"));
     match &git.commit_message {
-        Some(message) => text.push_str(&format!("  commit {message}\n")),
+        Some(message) => text.push_str(&format!("  commit {}\n", ui.bold(message))),
         None => text.push_str("  commit (none)\n"),
     }
     match &git.tag {
-        Some(tag) => text.push_str(&format!("     tag {tag}\n")),
+        Some(tag) => text.push_str(&format!("     tag {}\n", ui.bold(tag))),
         None => text.push_str("     tag (none)\n"),
     }
     match &git.push.as_deref() {
-        Some(remote) => text.push_str(&format!("    push yes ({remote})\n")),
+        Some(remote) => text.push_str(&format!("    push {} ({})\n", ui.bold_cyan("yes"), remote)),
         None => text.push_str("    push no\n"),
     }
     if plan.bumps.len() > 1 {
@@ -236,14 +249,14 @@ pub fn confirmation_text(ui: &Ui, plan: &Plan, git: &GitSummary) -> String {
                 "    {} {} -> {}\n",
                 ui.dim(&bump.name),
                 bump.old,
-                bump.new
+                ui.bold_green(bump.new.to_string())
             ));
         }
     } else {
         text.push_str(&format!(
             "\n    from {}\n      to {}\n",
-            plan.old_version,
-            ui.bold(plan.new_version.to_string())
+            ui.bold(plan.old_version.to_string()),
+            ui.bold_green(plan.new_version.to_string())
         ));
     }
     text
@@ -354,5 +367,42 @@ mod tests {
         let git = GitSummary::default();
         // Nothing to assert about stdout here beyond "it does not panic":
         print_plan(&ui, &plan(), "bumpp", &git);
+    }
+
+    #[test]
+    fn colors_are_kept_when_a_tty_supports_them() {
+        // `confirmation_text` returns a `String`, so colour assertions don't
+        // need a real terminal. `print_plan` writes via `println!` instead,
+        // which is exercised by the integration suite (where the suite's own
+        // `RUN` output is compared as text, ignoring ANSI).
+        let ui = Ui::new(false, true);
+        let git = GitSummary {
+            commit_message: Some("chore: release v0.0.3".to_string()),
+            tag: Some("v0.0.3".to_string()),
+            push: Some("origin".to_string()),
+            branch: Some("main".to_string()),
+        };
+        let confirm = confirmation_text(&ui, &plan(), &git);
+
+        // The new version is rendered in bold + green: `[1;32m0.0.3[0m`.
+        assert!(
+            confirm.contains("      to \u{1b}[1;32m0.0.3\u{1b}[0m"),
+            "the `to` line should be bold+green: {confirm:?}"
+        );
+        // `files Cargo.toml` → filename in bold.
+        assert!(
+            confirm.contains("\u{1b}[1mCargo.toml\u{1b}[0m"),
+            "files should be bold: {confirm:?}"
+        );
+        // `push yes` → bold + cyan.
+        assert!(
+            confirm.contains("\u{1b}[1;36myes\u{1b}[0m"),
+            "push 'yes' should be bold+cyan: {confirm:?}"
+        );
+        // `from 0.0.2` → bold (old version, no colour shift).
+        assert!(
+            confirm.contains("    from \u{1b}[1m0.0.2\u{1b}[0m"),
+            "the `from` line should be bold: {confirm:?}"
+        );
     }
 }
