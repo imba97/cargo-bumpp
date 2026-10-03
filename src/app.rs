@@ -54,7 +54,7 @@ pub fn run(args: &[String], cwd: &Path, injected: Option<&mut dyn Prompt>) -> Re
 
     let color = !options.quiet && sys::enable_ansi_output();
     let ui = Ui::new(options.quiet, color);
-    let mut terminal = TerminalPrompt::new(color, options.yes);
+    let mut terminal = TerminalPrompt::new(color, options.yes, options.quiet);
     let prompt: &mut dyn Prompt = match injected {
         Some(prompt) => prompt,
         None => &mut terminal,

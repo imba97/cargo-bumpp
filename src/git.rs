@@ -162,10 +162,7 @@ impl Git {
     pub fn commit(&self, files: &[PathBuf], message: &str, options: CommitOptions) -> Result<()> {
         let mut args: Vec<String> = Vec::new();
         // `-c` is a git option, so it has to come before the subcommand.
-        if !options.sign && options.unsigned {
-            args.push("-c".into());
-            args.push("commit.gpgsign=false".into());
-        }
+        push_gpgsign_override(&mut args, "commit", options.sign, options.unsigned);
         args.extend([
             "commit".to_string(),
             "--allow-empty".to_string(),
@@ -185,17 +182,13 @@ impl Git {
                 args.push(file.to_string_lossy().to_string());
             }
         }
-        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.checked_quiet(&refs)
+        self.run_args(args)
     }
 
     /// `git tag --annotate --message <msg> [--sign] <name>`
     pub fn tag(&self, name: &str, message: &str, sign: bool, unsigned: bool) -> Result<()> {
         let mut args: Vec<String> = Vec::new();
-        if !sign && unsigned {
-            args.push("-c".into());
-            args.push("tag.gpgsign=false".into());
-        }
+        push_gpgsign_override(&mut args, "tag", sign, unsigned);
         args.extend([
             "tag".to_string(),
             "--annotate".to_string(),
@@ -206,8 +199,7 @@ impl Git {
             args.push("--sign".into());
         }
         args.push(name.to_string());
-        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.checked_quiet(&refs)
+        self.run_args(args)
     }
 
     pub fn delete_tag(&self, name: &str) -> Result<()> {
@@ -285,6 +277,24 @@ impl Git {
             self.run(&["ls-files", "--error-unmatch", "--", &text]),
             Ok(output) if output.ok()
         )
+    }
+
+    /// Hand a built `Vec<String>` to `checked_quiet`. The two main callers
+    /// (`commit`, `tag`) build the list in the same shape, so the conversion
+    /// from `Vec<String>` to the `&[&str]` view that `checked_quiet` wants
+    /// lives here once.
+    fn run_args(&self, args: Vec<String>) -> Result<()> {
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        self.checked_quiet(&refs)
+    }
+}
+
+/// `-c <subcommand>.gpgsign=false` — same idea in `commit` and `tag`, just
+/// with different subcommand names.
+fn push_gpgsign_override(args: &mut Vec<String>, subcommand: &str, sign: bool, unsigned: bool) {
+    if !sign && unsigned {
+        args.push("-c".into());
+        args.push(format!("{subcommand}.gpgsign=false"));
     }
 }
 

@@ -101,7 +101,12 @@ impl Plan {
 pub fn build(workspace: &Workspace, options: &Options, level: &Level) -> Result<Plan> {
     let paths = workspace.manifests();
     let mut docs: Vec<Manifest> = Vec::with_capacity(paths.len());
-    for path in &paths {
+    // `paths[0]` is the workspace root; the workspace already parses and caches
+    // it (see `Workspace::root_parsed`), so reusing the cached copy saves a
+    // second disk read after `plan::detect_current` has looked at the same
+    // file. Every other manifest is read here.
+    docs.push(workspace.root_parsed()?.clone());
+    for path in &paths[1..] {
         docs.push(
             Manifest::read(path)
                 .map_err(|err| Error::io(format!("cannot read `{}`: {err}", path.display())))?,
@@ -416,12 +421,9 @@ pub fn detect_current(workspace: &Workspace, options: &Options) -> Result<Versio
     if let Some(version) = &options.current_version {
         return Ok(version.clone());
     }
-    let root = Manifest::read(&workspace.root_manifest).map_err(|err| {
-        Error::io(format!(
-            "cannot read `{}`: {err}",
-            workspace.root_manifest.display()
-        ))
-    })?;
+    // Reuse the cached root manifest: `plan::build` reads the same file a
+    // moment later, and the cache means it only hits disk once.
+    let root = workspace.root_parsed()?;
     if let Some(found) = root.workspace_package_version() {
         return parse_version(&found.text, &workspace.root_manifest);
     }

@@ -5,13 +5,14 @@
 //! every member's version and manifest path, and every path dependency's
 //! requirement, and its correctness is Cargo's own.
 
+use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::error::{Error, Result};
 use crate::json::Json;
 use crate::semver::Version;
-use crate::toml_line::{normalize, same_dir};
+use crate::toml_line::{normalize, same_dir, Manifest};
 
 /// A workspace member.
 #[derive(Debug, Clone)]
@@ -43,11 +44,16 @@ pub struct MemberDep {
 }
 
 /// The workspace as Cargo sees it.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Workspace {
     pub root: PathBuf,
     /// The root manifest, `<root>/Cargo.toml`.
     pub root_manifest: PathBuf,
+    /// The parsed root manifest, loaded on first request and shared by every
+    /// caller (`plan::detect_current` and `plan::build` both need it, and the
+    /// plan also loads every member manifest — sharing the parsed root avoids
+    /// a redundant disk read).
+    root_parsed: OnceCell<Manifest>,
     pub members: Vec<Member>,
     /// Path dependencies between members.
     pub deps: Vec<MemberDep>,
@@ -106,11 +112,14 @@ impl Workspace {
         let mut all_packages: Vec<(String, PathBuf)> = Vec::new();
 
         for package in packages {
-            let name = package.str_at("name").unwrap_or_default().to_string();
-            let id = package.str_at("id").unwrap_or_default();
-            let manifest_text = package.str_at("manifest_path").unwrap_or_default();
+            let index = package.index();
+            let lookup =
+                |key: &str| -> Option<&str> { index.as_ref()?.get(key).and_then(|v| v.as_str()) };
+            let name = lookup("name").unwrap_or_default().to_string();
+            let id = lookup("id").unwrap_or_default();
+            let manifest_text = lookup("manifest_path").unwrap_or_default();
             let manifest_path = normalize(Path::new(manifest_text));
-            let version_text = package.str_at("version").unwrap_or_default().to_string();
+            let version_text = lookup("version").unwrap_or_default().to_string();
 
             // `--no-deps` should already limit this to members, but filter anyway.
             if !member_ids.is_empty() && !member_ids.contains(&id) {
@@ -136,15 +145,23 @@ impl Workspace {
         // Path dependencies that stay inside the workspace.
         let mut deps = Vec::new();
         for package in packages {
-            let from = package.str_at("name").unwrap_or_default().to_string();
-            let manifest_path = normalize(Path::new(
-                package.str_at("manifest_path").unwrap_or_default(),
-            ));
-            let Some(list) = package.get("dependencies").and_then(Json::as_array) else {
+            let index = package.index();
+            let lookup =
+                |key: &str| -> Option<&str> { index.as_ref()?.get(key).and_then(|v| v.as_str()) };
+            let from = lookup("name").unwrap_or_default().to_string();
+            let manifest_path = normalize(Path::new(lookup("manifest_path").unwrap_or_default()));
+            let lookup_array = |key: &str| -> Option<&[Json]> {
+                index.as_ref()?.get(key).and_then(|v| v.as_array())
+            };
+            let Some(list) = lookup_array("dependencies") else {
                 continue;
             };
             for dep in list {
-                let Some(path_text) = dep.str_at("path") else {
+                let dep_index = dep.index();
+                let lookup = |k: &str| -> Option<&str> {
+                    dep_index.as_ref()?.get(k).and_then(|v| v.as_str())
+                };
+                let Some(path_text) = lookup("path") else {
                     continue;
                 };
                 let to_dir = normalize(Path::new(path_text));
@@ -157,11 +174,11 @@ impl Workspace {
                 deps.push(MemberDep {
                     from: from.clone(),
                     to: to.clone(),
-                    rename: dep.str_at("rename").map(|name| name.to_string()),
+                    rename: lookup("rename").map(str::to_string),
                     to_dir: to_dir.clone(),
-                    req: dep.str_at("req").unwrap_or_default().to_string(),
+                    req: lookup("req").unwrap_or_default().to_string(),
                     manifest_path: manifest_path.clone(),
-                    kind: dep.str_at("kind").map(|kind| kind.to_string()),
+                    kind: lookup("kind").map(str::to_string),
                 });
             }
         }
@@ -174,10 +191,33 @@ impl Workspace {
         Ok(Workspace {
             root_manifest: root.join("Cargo.toml"),
             root,
+            root_parsed: OnceCell::new(),
             members,
             deps,
             lockfile,
         })
+    }
+
+    /// The parsed root manifest, loaded and cached on first call. Used by the
+    /// plan builder so the workspace is only read from disk once.
+    ///
+    /// `OnceCell::get_or_try_init` is unstable on the project's MSRV (1.74),
+    /// so the cache is filled manually: the first caller reads the file and
+    /// inserts the result; any later caller reuses the cached value.
+    pub fn root_parsed(&self) -> Result<&Manifest> {
+        if let Some(existing) = self.root_parsed.get() {
+            return Ok(existing);
+        }
+        let parsed = Manifest::read(&self.root_manifest).map_err(|err| {
+            Error::io(format!(
+                "cannot read `{}`: {err}",
+                self.root_manifest.display()
+            ))
+        })?;
+        let _ = self.root_parsed.set(parsed);
+        // Either we just filled it, or another caller raced and did — either
+        // way, `get()` now returns `Some`.
+        Ok(self.root_parsed.get().expect("just initialized"))
     }
 
     pub fn member(&self, name: &str) -> Option<&Member> {

@@ -19,6 +19,11 @@ pub struct Manifest {
     lines: Vec<String>,
     eol: String,
     trailing_newline: bool,
+    /// Eagerly scanned on construction: `workspace_package_version`,
+    /// `package_version` and `dependency_decls` all need the same per-line
+    /// entries, and the three callers were each rebuilding it before. Keeping
+    /// it on the struct (rather than behind `OnceCell`) preserves `Clone`.
+    entries: Vec<ScopedEntry>,
 }
 
 /// A string value somewhere in a manifest.
@@ -154,11 +159,13 @@ impl Manifest {
 
     pub fn from_text(path: PathBuf, original: String) -> Manifest {
         let (lines, eol, trailing_newline) = split_lines(&original);
+        let entries = scan_entries(&lines);
         Manifest {
             path,
             lines,
             eol,
             trailing_newline,
+            entries,
         }
     }
 
@@ -195,7 +202,7 @@ impl Manifest {
 
     /// `[workspace.package] version = "..."`.
     pub fn workspace_package_version(&self) -> Option<Found> {
-        self.entries().into_iter().find_map(|entry| {
+        self.entries().iter().find_map(|entry| {
             if entry.section_path == ["workspace", "package"] {
                 found_string(&entry.item, &["version"], &entry.section)
             } else {
@@ -206,7 +213,7 @@ impl Manifest {
 
     /// `[package] version = "..."`, unless it is `version.workspace = true`.
     pub fn package_version(&self) -> Option<Found> {
-        self.entries().into_iter().find_map(|entry| {
+        self.entries().iter().find_map(|entry| {
             if entry.section_path == ["package"] {
                 found_string(&entry.item, &["version"], &entry.section)
             } else {
@@ -276,77 +283,85 @@ impl Manifest {
         out
     }
 
-    /// Every `key = value` in the file, in order, with its section.
-    fn entries(&self) -> Vec<ScopedEntry> {
-        let mut out = Vec::new();
-        let mut section = String::new();
-        let mut section_path: Vec<String> = Vec::new();
-        // A value that continues on later lines: (opening byte, depth).
-        let mut container: Option<(u8, usize)> = None;
+    /// Every `key = value` in the file, in order, with its section. Computed
+    /// once at construction (see [`Manifest::from_text`]); a borrow keeps the
+    /// signature the same for the three callers.
+    fn entries(&self) -> &[ScopedEntry] {
+        &self.entries
+    }
+}
 
-        for (index, line) in self.lines.iter().enumerate() {
-            let trimmed = line.trim_start();
-            let blank_or_comment = trimmed.is_empty() || trimmed.starts_with('#');
+/// Build the per-line entries list. Pure function so the cache wrapper above
+/// can hand the result to `OnceCell::get_or_init` directly.
+fn scan_entries(lines: &[String]) -> Vec<ScopedEntry> {
+    let mut out = Vec::new();
+    let mut section = String::new();
+    let mut section_path: Vec<String> = Vec::new();
+    // A value that continues on later lines: (opening byte, depth).
+    let mut container: Option<(u8, usize)> = None;
 
-            if let Some((open, depth)) = container {
-                if blank_or_comment {
-                    continue;
-                }
-                let close = if open == b'{' { b'}' } else { b']' };
-                match container_depth(line, open, close, depth) {
-                    Some(0) => container = None,
-                    Some(remaining) => container = Some((open, remaining)),
-                    // An unreadable line leaves us inside the container: skipping
-                    // too much is safer than inventing entries.
-                    None => {}
-                }
-                continue;
-            }
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        let blank_or_comment = trimmed.is_empty() || trimmed.starts_with('#');
 
+        if let Some((open, depth)) = container {
             if blank_or_comment {
                 continue;
             }
-
-            if trimmed.starts_with('[') {
-                match parse_header(trimmed) {
-                    Ok((header, path)) => {
-                        section = header;
-                        section_path = path;
-                    }
-                    Err(reason) => {
-                        section = format!("<unparsed header: {reason}>");
-                        section_path = Vec::new();
-                    }
-                }
-                continue;
+            let close = if open == b'{' { b'}' } else { b']' };
+            match container_depth(line, open, close, depth) {
+                Some(0) => container = None,
+                Some(remaining) => container = Some((open, remaining)),
+                // An unreadable line leaves us inside the container: skipping
+                // too much is safer than inventing entries.
+                None => {}
             }
-
-            let indent = line.len() - trimmed.len();
-            let mut scanner = Scanner::new(line, indent, index);
-            let Some(parts) = scanner.key() else { continue };
-            scanner.skip_space();
-            if scanner.peek() != Some(b'=') {
-                continue;
-            }
-            scanner.advance(1);
-            let value = scanner.value();
-            if let Some(open) = unclosed_container(&value) {
-                // The scan counts the opening bracket itself, so start at 0.
-                let depth = container_depth(line, open, if open == b'{' { b'}' } else { b']' }, 0);
-                container = depth.map(|remaining| (open, remaining));
-            }
-            out.push(ScopedEntry {
-                section: section.clone(),
-                section_path: section_path.clone(),
-                item: KeyValue {
-                    parts,
-                    line: index,
-                    value,
-                },
-            });
+            continue;
         }
-        out
+
+        if blank_or_comment {
+            continue;
+        }
+
+        if trimmed.starts_with('[') {
+            match parse_header(trimmed) {
+                Ok((header, path)) => {
+                    section = header;
+                    section_path = path;
+                }
+                Err(reason) => {
+                    section = format!("<unparsed header: {reason}>");
+                    section_path = Vec::new();
+                }
+            }
+            continue;
+        }
+
+        let indent = line.len() - trimmed.len();
+        let mut scanner = Scanner::new(line, indent, index);
+        let Some(parts) = scanner.key() else { continue };
+        scanner.skip_space();
+        if scanner.peek() != Some(b'=') {
+            continue;
+        }
+        scanner.advance(1);
+        let value = scanner.value();
+        if let Some(open) = unclosed_container(&value) {
+            // The scan counts the opening bracket itself, so start at 0.
+            let depth = container_depth(line, open, if open == b'{' { b'}' } else { b']' }, 0);
+            container = depth.map(|remaining| (open, remaining));
+        }
+        out.push(ScopedEntry {
+            section: section.clone(),
+            section_path: section_path.clone(),
+            item: KeyValue {
+                parts,
+                line: index,
+                value,
+            },
+        });
     }
+    out
 }
 
 fn new_decl(name: String, section: String, line: usize) -> DepDecl {
@@ -361,6 +376,7 @@ fn new_decl(name: String, section: String, line: usize) -> DepDecl {
     }
 }
 
+#[derive(Debug, Clone)]
 struct ScopedEntry {
     section: String,
     section_path: Vec<String>,
@@ -453,12 +469,18 @@ fn split_lines(text: &str) -> (Vec<String>, String, bool) {
     if text.is_empty() {
         return (Vec::new(), "\n".to_string(), false);
     }
-    let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let crlf = text.contains("\r\n");
+    let eol = if crlf { "\r\n" } else { "\n" };
     let trailing_newline = text.ends_with('\n');
-    let mut lines: Vec<String> = text
-        .split('\n')
-        .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
-        .collect();
+    // LF files need no per-line work; CRLF files do, because each line still
+    // carries a trailing `\r` that has to be stripped before the line is stored.
+    let mut lines: Vec<String> = if crlf {
+        text.split('\n')
+            .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
+            .collect()
+    } else {
+        text.split('\n').map(str::to_string).collect()
+    };
     if trailing_newline {
         lines.pop();
     }

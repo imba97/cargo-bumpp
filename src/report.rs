@@ -4,9 +4,20 @@
 //! change, with its line number, *before* anything is written. That is what the
 //! design offers instead of a dry-run mode.
 
-use std::path::Path;
-
+use crate::git::display_path;
 use crate::plan::Plan;
+
+/// Wrap `text` in an ANSI escape sequence when `color` is on; otherwise pass
+/// it through. The single place every colour call in the tool goes through —
+/// `Ui::paint` and `TerminalPrompt::paint` both delegate here so a change to
+/// the escape sequence (or to a future TTY-detection rule) only happens once.
+pub fn ansi(code: &str, color: bool, text: &str) -> String {
+    if color {
+        format!("\u{1b}[{code}m{text}\u{1b}[0m")
+    } else {
+        text.to_string()
+    }
+}
 
 /// Output sink with colour and quiet handling.
 #[derive(Debug, Clone)]
@@ -21,11 +32,7 @@ impl Ui {
     }
 
     fn paint(&self, code: &str, text: &str) -> String {
-        if self.color {
-            format!("\u{1b}[{code}m{text}\u{1b}[0m")
-        } else {
-            text.to_string()
-        }
+        ansi(code, self.color, text)
     }
 
     pub fn bold(&self, text: impl AsRef<str>) -> String {
@@ -200,7 +207,7 @@ pub fn print_plan(ui: &Ui, plan: &Plan, command: &str, git: &GitSummary) {
     if let Some(lockfile) = &plan.lockfile {
         println!(
             "  {}  {}",
-            ui.bold(display(&plan.root, lockfile)),
+            ui.bold(display_path(&plan.root, lockfile)),
             ui.dim("(cargo update --workspace)")
         );
     }
@@ -315,13 +322,6 @@ pub fn print_commits(
         );
     }
     println!();
-}
-
-fn display(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
 }
 
 #[cfg(test)]

@@ -3,6 +3,7 @@
 //! Implementing it here keeps the crate dependency-free; the parser is strict
 //! (RFC 8259), depth-limited, and has no opinion about the schema.
 
+use std::collections::HashMap;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,6 +63,19 @@ impl Json {
     /// Convenience for `obj["key"].as_str()`.
     pub fn str_at(&self, key: &str) -> Option<&str> {
         self.get(key).and_then(|v| v.as_str())
+    }
+
+    /// Build a one-shot lookup map for repeated `get` calls on the same object.
+    ///
+    /// Each [`get`](Self::get) call linearly scans the object's entries, which
+    /// is fine for a single key but wasteful when callers do several lookups
+    /// (the workspace loader does four per package). The returned map is owned
+    /// by the caller; nothing is cached on the `Json` itself.
+    pub fn index(&self) -> Option<HashMap<&str, &Json>> {
+        match self {
+            Json::Object(entries) => Some(entries.iter().map(|(k, v)| (k.as_str(), v)).collect()),
+            _ => None,
+        }
     }
 }
 

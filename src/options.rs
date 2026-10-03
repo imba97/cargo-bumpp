@@ -135,17 +135,13 @@ impl Options {
         }
 
         // 2. commit: explicit wins, otherwise tag/push pull it in.
-        let commit = match raw.commit {
-            Some(value) => value,
-            None => raw.tag.unwrap_or(true) || raw.push.unwrap_or(true),
-        };
+        let commit = raw
+            .commit
+            .unwrap_or_else(|| raw.tag.unwrap_or(true) || raw.push.unwrap_or(true));
 
         // 3. tag: explicit wins, otherwise on — except after a deliberate
         //    `--no-commit`, where there is nothing to tag.
-        let tag = match raw.tag {
-            Some(value) => value,
-            None => raw.commit != Some(false),
-        };
+        let tag = raw.tag.unwrap_or_else(|| raw.commit != Some(false));
 
         // 4. push: explicit wins, otherwise on.
         let push_requested = raw.push.unwrap_or(true);
@@ -164,21 +160,19 @@ impl Options {
 
         let release_from_prompt = matches!(raw.release, None | Some(Level::Prompt));
         let level = match raw.release {
-            Some(Level::Prompt) => Level::Patch,
+            Some(Level::Prompt) | None => Level::Patch,
             Some(level) => level,
-            None => Level::Patch,
         };
 
         let preid = raw.preid.unwrap_or_else(|| DEFAULT_PREID.to_string());
         validate_preid(&preid)?;
 
-        let current_version = match raw.current_version {
-            Some(text) => Some(
-                Version::parse_lenient(&text)
-                    .map_err(|err| Error::usage(format!("--current-version: {err}")))?,
-            ),
-            None => None,
-        };
+        let current_version = raw
+            .current_version
+            .as_deref()
+            .map(Version::parse_lenient)
+            .transpose()
+            .map_err(|err| Error::usage(format!("--current-version: {err}")))?;
 
         let commit_window = raw.commit_window.unwrap_or(DEFAULT_COMMIT_WINDOW);
         if commit_window == 0 {

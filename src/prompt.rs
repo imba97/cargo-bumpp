@@ -10,6 +10,7 @@ use std::io::{BufRead, Read, Write};
 
 use crate::error::{Error, Result};
 use crate::plan::increment;
+use crate::report::ansi;
 use crate::semver::{Level, Version};
 use crate::sys;
 
@@ -59,6 +60,30 @@ const LABEL_WIDTH: usize = 13;
 const CUSTOM_WIDTH: usize = LABEL_WIDTH + 4;
 /// The row the cursor starts on.
 const DEFAULT_ROW: usize = 3; // `next`
+
+/// Tracks how many invalid answers a prompt has received.
+///
+/// Three prompt loops (`confirm`, `select_with_numbers`, `ask_version`) all
+/// give the user three tries before erroring out — the previous code repeated
+/// the `attempts += 1; if attempts >= 3 { ... }` pattern in each. This struct
+/// keeps the loop body focused on what changes between sites (the hint text)
+/// and what to do when the limit is reached (build the `Error`).
+struct Attempts {
+    count: usize,
+    limit: usize,
+}
+
+impl Attempts {
+    fn new(limit: usize) -> Self {
+        Self { count: 0, limit }
+    }
+    /// Record one invalid answer. Returns `true` while the caller should keep
+    /// trying, `false` once the limit is reached.
+    fn invalid(&mut self) -> bool {
+        self.count += 1;
+        self.count < self.limit
+    }
+}
 
 /// The twelve rows, in the reference implementation's order.
 pub fn choices(current: &Version, preid: &str, conventional: Level) -> Vec<Choice> {
@@ -219,6 +244,9 @@ pub struct TerminalPrompt {
     pub color: bool,
     /// `-y`: never ask for confirmation.
     pub skip_confirm: bool,
+    /// `--quiet`: the confirmation block is part of the run's normal output and
+    /// is hidden by `--quiet`, the same way the plan and the per-step lines are.
+    pub quiet: bool,
     /// Terminal height to lay the selector out for; `None` asks the OS.
     pub rows: Option<usize>,
 }
@@ -281,10 +309,11 @@ impl Window {
 }
 
 impl TerminalPrompt {
-    pub fn new(color: bool, skip_confirm: bool) -> Self {
+    pub fn new(color: bool, skip_confirm: bool, quiet: bool) -> Self {
         TerminalPrompt {
             color,
             skip_confirm,
+            quiet,
             rows: None,
         }
     }
@@ -324,11 +353,15 @@ impl Prompt for TerminalPrompt {
     }
 
     fn confirm(&mut self, summary: &str) -> Result<bool> {
-        println!("{summary}");
+        // `--quiet` hides everything else; the confirmation block is output
+        // too, so it is hidden here as well.
+        if !self.quiet {
+            println!("{summary}");
+        }
         if self.skip_confirm {
             return Ok(true);
         }
-        let mut attempts = 0;
+        let mut attempts = Attempts::new(3);
         loop {
             print!("? Bump? (Y/n) ");
             std::io::stdout().flush().ok();
@@ -342,8 +375,7 @@ impl Prompt for TerminalPrompt {
                 "" | "y" | "yes" => return Ok(true),
                 "n" | "no" => return Ok(false),
                 other => {
-                    attempts += 1;
-                    if attempts >= 3 {
+                    if !attempts.invalid() {
                         return Err(Error::usage(format!(
                             "`{other}` is not an answer to `Bump?` (expected y or n)"
                         )));
@@ -504,11 +536,7 @@ impl TerminalPrompt {
 
     /// Wrap `text` in an ANSI sequence, unless colour is off.
     fn paint(&self, code: &str, text: &str) -> String {
-        if self.color {
-            format!("\u{1b}[{code}m{text}\u{1b}[0m")
-        } else {
-            text.to_string()
-        }
+        ansi(code, self.color, text)
     }
 
     fn clear_menu(&self, drawn: usize) {
@@ -534,7 +562,7 @@ impl TerminalPrompt {
         println!();
 
         let default = DEFAULT_ROW.min(choices.len() - 1);
-        let mut attempts = 0;
+        let mut attempts = Attempts::new(3);
         loop {
             print!("  > ");
             std::io::stdout().flush().ok();
@@ -556,8 +584,7 @@ impl TerminalPrompt {
                     return Ok(Selection::Level(choices[index].level.clone()));
                 }
                 None => {
-                    attempts += 1;
-                    if attempts >= 3 {
+                    if !attempts.invalid() {
                         return Err(Error::usage(format!(
                             "`{text}` is not one of the choices (give a number or a name)"
                         )));
@@ -593,7 +620,7 @@ fn match_choice(choices: &[Choice], text: &str) -> Option<usize> {
 
 /// Ask for a version by hand, validating it like the reference does.
 fn ask_version(current: &Version) -> Result<Option<Version>> {
-    let mut attempts = 0;
+    let mut attempts = Attempts::new(3);
     loop {
         print!("  version (current {current}) > ");
         std::io::stdout().flush().ok();
@@ -607,8 +634,7 @@ fn ask_version(current: &Version) -> Result<Option<Version>> {
         match Version::parse_lenient(text) {
             Ok(version) => return Ok(Some(version)),
             Err(err) => {
-                attempts += 1;
-                if attempts >= 3 {
+                if !attempts.invalid() {
                     return Err(Error::usage(format!("`{text}`: {err}")));
                 }
                 println!("  {err}");
@@ -824,8 +850,8 @@ mod tests {
     #[test]
     fn the_row_under_the_cursor_is_highlighted() {
         let rows = choices(&v("1.2.0"), "beta", Level::Patch);
-        let plain = TerminalPrompt::new(false, false);
-        let colored = TerminalPrompt::new(true, false);
+        let plain = TerminalPrompt::new(false, false, false);
+        let colored = TerminalPrompt::new(true, false, false);
 
         // Colour off: the row is exactly the marker plus the plain rendering,
         // which is what also goes into a pipe or a `--quiet` run.
@@ -852,7 +878,7 @@ mod tests {
 
     #[test]
     fn the_picked_row_is_reported_with_the_current_version() {
-        let mut prompt = TerminalPrompt::new(true, false);
+        let mut prompt = TerminalPrompt::new(true, false, false);
         let rows = choices(&v("1.2.0"), "beta", Level::Patch);
         // `finish` prints and returns; the level it hands back is the row's
         let selection = prompt.finish(&v("1.2.0"), &rows, 3, 0).unwrap();
@@ -863,7 +889,7 @@ mod tests {
     fn a_list_that_fits_shows_everything_and_says_nothing() {
         let rows = choices(&v("1.2.0"), "beta", Level::Patch);
         // 11 rows plus 3 lines of chrome need a 14-row terminal
-        let prompt = TerminalPrompt::new(false, false).with_rows(20);
+        let prompt = TerminalPrompt::new(false, false, false).with_rows(20);
         let lines = prompt.menu_lines(&v("1.2.0"), &rows, 0);
         assert_eq!(lines.len(), 2 + rows.len());
         assert!(
@@ -878,7 +904,7 @@ mod tests {
     fn a_list_that_does_not_fit_scrolls_with_an_ellipsis_at_the_bottom() {
         let rows = choices(&v("1.2.0"), "beta", Level::Patch); // 11 rows
                                                                // 8 rows of terminal - 3 lines of chrome = 5 lines: 4 items + the `...`
-        let prompt = TerminalPrompt::new(false, false).with_rows(8);
+        let prompt = TerminalPrompt::new(false, false, false).with_rows(8);
         let cursor_row = |lines: &[String]| {
             lines
                 .iter()
@@ -924,7 +950,7 @@ mod tests {
     #[test]
     fn the_end_of_the_list_is_reachable_without_a_marker() {
         let rows = choices(&v("1.2.0"), "beta", Level::Patch);
-        let prompt = TerminalPrompt::new(false, false).with_rows(8);
+        let prompt = TerminalPrompt::new(false, false, false).with_rows(8);
         let lines = prompt.menu_lines(&v("1.2.0"), &rows, rows.len() - 1);
 
         assert_eq!(lines[2], "  ↑ ...", "{lines:?}");
@@ -945,7 +971,7 @@ mod tests {
         // A spec of the layout, spacing included, for an 8-line terminal with
         // the cursor three rows down. Colour off, so the text is the text.
         let rows = choices(&v("1.2.0"), "beta", Level::Patch);
-        let prompt = TerminalPrompt::new(false, false).with_rows(8);
+        let prompt = TerminalPrompt::new(false, false, false).with_rows(8);
         let lines = prompt.menu_lines(&v("1.2.0"), &rows, 3);
         assert_eq!(
             lines,
