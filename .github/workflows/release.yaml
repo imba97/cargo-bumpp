@@ -62,57 +62,31 @@ jobs:
       # job's cache is what made this job report cleanup errors about a
       # `target/package/` tree it never created.
 
-      - name: Verify the tag matches the manifest
-        run: |
-          set -euo pipefail
-          manifest_version=$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[0].version')
-          tag_version="${GITHUB_REF_NAME#v}"
-          echo "manifest: $manifest_version"
-          echo "tag:      $tag_version"
-          if [ "$manifest_version" != "$tag_version" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match the version in Cargo.toml ($manifest_version)"
-            echo "Bump the version, or retag."
-            exit 1
-          fi
+      # The release tool. Everything this job used to work out in shell -- the tag
+      # check, the token check, and the publish loop -- is one `harbor` command.
+      - name: Install the release tool
+        run: cargo install harbor --locked
 
-      # The token comes from the environment, never from a command line, so it
-      # cannot leak into a log through `cargo` echoing its arguments.
-      - name: Check the token is present
+      # Two guards and a plan, in one command: the tag names the version in the
+      # manifest, a registry token is present and non-empty, and the release plan
+      # is computable at all. Nothing is uploaded until all three hold.
+      #
+      # The token is passed through the environment and never as an argument, so it
+      # cannot reach a log by way of cargo echoing a command line.
+      - name: Check the release before starting it
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
-            echo "::error::the CARGO_REGISTRY_TOKEN secret is empty"
-            echo "Add it under Settings -> Secrets and variables -> Actions,"
-            echo "named exactly CARGO_REGISTRY_TOKEN."
-            exit 1
-          fi
-          echo "token present (${#CARGO_REGISTRY_TOKEN} characters, not printed)"
+        run: cargo harbor check --plan "$GITHUB_REF_NAME"
 
+      # `harbor publish` replaces what used to be here: `cargo publish` wrapped in a
+      # branch that grepped the output. It retries when a dependency is not indexed
+      # yet, treats a version that is already on the registry as done so a re-run
+      # finishes a partial release, and stops at once on anything else rather than
+      # spending a retry budget on a failure a retry cannot fix.
+      #
+      # No `--order`: this crate is one package with no `publish = false`, so the
+      # plan `check --plan` just computed is the whole answer.
       - name: Publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          # `--locked` publishes exactly the dependency set CI tested, instead of
-          # quietly resolving a newer one at release time. There is no
-          # "is it already there?" probe before this: every probe available here
-          # lies (`cargo search` fuzzy-matches, `cargo info` resolves against the
-          # local workspace), so the publish error itself is the only trustworthy
-          # signal and it is what this branches on.
-          if output=$(cargo publish --locked 2>&1); then
-            echo "$output"
-            echo "published"
-          elif grep -qi 'already uploaded\|already exists' <<<"$output"; then
-            # A re-run after a partial release lands here. crates.io never allows
-            # a re-upload, so the version being there already is done, not failed.
-            echo "$output"
-            echo "this version is already on the registry, nothing to do"
-          else
-            echo "$output"
-            echo "::error::publishing failed"
-            exit 1
-          fi
+        run: cargo harbor publish
