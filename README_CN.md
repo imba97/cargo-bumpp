@@ -148,8 +148,9 @@ $ cargo bumpp --retag
 ```
 
 - **发布哪个**：`--retag <tag>` 用给定的 tag；不带参数就用**从 HEAD 可达的最近一个 tag** —— 和
-  `conventional` 读取提交范围的"上一个 tag"是同一个定义。一个 tag 都没有、或者给的 tag 不在本仓
-  库里，都会报错并给出修法（`git fetch --tags`）。
+  `conventional` 读取提交范围的"上一个 tag"是同一个定义 —— **但前提是这个 tag 已经在 HEAD 上**。
+  如果 HEAD 已经走在这次发布前面，默认重发就会把已发布的版本号指到未发布的提交上，所以这种移动必须
+  点名说清楚。一个 tag 都没有、或者给的 tag 不在本仓库里，都会报错并给出修法（`git fetch --tags`）。
 - **是重建，不只是推送**：附注 tag 会保留原有附注信息，并生成一个新的 tag 对象（tagger 时间属于对象
   内容）；轻量 tag 则和 `git tag -f` 一样移到 HEAD。正是这个新对象让强推真的更新远端 ref，流水线才
   会重新跑。
@@ -169,7 +170,7 @@ $ cargo bumpp --retag
 | 选项 | 默认 | 作用 |
 | --- | --- | --- |
 | `--release <level>` | `prompt` | 升级级别或版本号，替代位置参数 |
-| `--retag [tag]` | 上一个 tag | 重新发布已有 tag：重建后强推，见[重新发布 tag](#重新发布-tag) |
+| `--retag [tag]` | 上一个 tag（须在 HEAD 上） | 重新发布已有 tag：重建后强推，见[重新发布 tag](#重新发布-tag) |
 | `--preid <preid>` | `beta` | 预发布标识 |
 | `-a, --all` | `false` | 连同其它改动一起 `git add --all` 并提交 |
 | `--git-check` / `--no-git-check` | 开 | 要求工作区干净 |

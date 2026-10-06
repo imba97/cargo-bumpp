@@ -28,15 +28,18 @@ pub(super) fn run(
     ui: &Ui,
     prompt: &mut dyn Prompt,
 ) -> Result<()> {
-    let name = match &options.retag_name {
+    let (name, named) = match &options.retag_name {
         Some(name) => {
             validate_tag(name)?;
-            name.clone()
+            (name.clone(), true)
         }
-        None => git.last_tag()?.ok_or_else(|| {
-            Error::check("there is no tag to re-release")
-                .with_hint("name one with --retag <tag>; `git tag` lists them")
-        })?,
+        None => (
+            git.last_tag()?.ok_or_else(|| {
+                Error::check("there is no tag to re-release")
+                    .with_hint("name one with --retag <tag>; `git tag` lists them")
+            })?,
+            false,
+        ),
     };
 
     if !git.tag_exists(&name) {
@@ -53,6 +56,23 @@ pub(super) fn run(
     };
     let from_commit = git.tag_target(&name)?;
     let head = git.head()?;
+
+    // Re-releasing means "push the release that is already here again". When the
+    // tag is not at HEAD, HEAD has moved past it, and moving a tag that people
+    // may already have onto later commits is not something to do by default: the
+    // tag name has to be said out loud. (This is what keeps a scripted `-y` run
+    // from re-pointing a published version at unreleased code.)
+    if !named && from_commit != head {
+        return Err(Error::check(format!(
+            "the most recent tag `{name}` points at {}, not at HEAD ({})",
+            short(&from_commit),
+            short(&head)
+        ))
+        .with_hint(format!(
+            "HEAD has moved past that release; to move the tag onto HEAD on purpose, name it:\n  \
+             --retag {name}"
+        )));
+    }
 
     let remote = if options.push {
         Some(git.default_remote()?)
@@ -72,8 +92,8 @@ pub(super) fn run(
     if from_commit != head {
         ui.warn(format!(
             "`{name}` points at {}; re-releasing moves it to HEAD ({})",
-            &from_commit[..from_commit.len().min(8)],
-            &head[..head.len().min(8)]
+            short(&from_commit),
+            short(&head)
         ));
     }
     if options.sign && !annotated {
@@ -124,6 +144,11 @@ pub(super) fn run(
     }
 
     Ok(())
+}
+
+/// The first eight characters of an object id, for a message.
+fn short(id: &str) -> &str {
+    &id[..id.len().min(8)]
 }
 
 /// `git push --force <remote> refs/tags/<tag>`, reporting a rejection the way the

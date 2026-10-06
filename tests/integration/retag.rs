@@ -163,6 +163,39 @@ fn declining_changes_nothing() {
 }
 
 #[test]
+fn the_default_tag_must_already_be_at_head() {
+    let project = released("retag-moved-on", "v0.3.0");
+    // HEAD moves past the release: re-releasing by default would silently
+    // re-point a published version at unreleased code.
+    project.write("src/main.rs", "fn main() { println!(\"later\"); }\n");
+    project.git(&["commit", "--all", "--message", "feat: later work"]);
+    let tag_object = project.git(&["rev-parse", "v0.3.0"]);
+
+    let run = project.run(&["--retag", "-y"]);
+    run.expect_code(1);
+    let out = run.all();
+    assert!(out.contains("not at HEAD"), "{out}");
+    assert!(
+        out.contains("--retag v0.3.0"),
+        "the hint names the tag: {out}"
+    );
+    assert_eq!(
+        project.git(&["rev-parse", "v0.3.0"]),
+        tag_object,
+        "the tag was not moved"
+    );
+
+    // Naming it is the explicit way to say the move is meant.
+    project
+        .run(&["--retag", "v0.3.0", "-y", "--no-push"])
+        .expect_success();
+    assert_eq!(
+        project.git(&["rev-parse", "v0.3.0^{commit}"]),
+        project.git(&["rev-parse", "HEAD"])
+    );
+}
+
+#[test]
 fn a_re_release_needs_a_tag() {
     let project = Project::package("retag-none", "0.3.0");
     project.write("src/main.rs", "fn main() {}\n");

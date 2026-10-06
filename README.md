@@ -159,8 +159,11 @@ $ cargo bumpp --retag
 
 - **Which tag**: `--retag <tag>` names one. `--retag` on its own takes the most
   recent tag reachable from HEAD — the same "last tag" that `conventional` reads
-  the commit range from. Having no tag at all, or naming one that is not in this
-  repository, is an error that says how to fix it (`git fetch --tags`).
+  the commit range from — **but only when that tag already points at HEAD**.
+  HEAD having moved past a release means the tag would be re-pointed at unreleased
+  commits, and that move has to be asked for by name. Having no tag at all, or
+  naming one that is not in this repository, is an error that says how to fix it
+  (`git fetch --tags`).
 - **The tag is re-created, not just pushed.** An annotated tag keeps its message
   and becomes a new tag object (its tagger date is part of it); a lightweight tag
   is moved to HEAD, exactly as `git tag -f` would leave it. That new object is
@@ -189,7 +192,7 @@ $ cargo bumpp --retag
 | Option | Default | What it does |
 | --- | --- | --- |
 | `--release <level>` | `prompt` | the level or version, instead of the positional argument |
-| `--retag [tag]` | last tag | re-release an existing tag: re-create it at HEAD and force-push it, see [Re-releasing a tag](#re-releasing-a-tag) |
+| `--retag [tag]` | last tag, at HEAD | re-release an existing tag: re-create it at HEAD and force-push it, see [Re-releasing a tag](#re-releasing-a-tag) |
 | `--preid <preid>` | `beta` | pre-release identifier |
 | `-a, --all` | `false` | `git add --all` and commit everything, not just the bumped files |
 | `--git-check` / `--no-git-check` | on | require a clean working tree |
