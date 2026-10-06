@@ -17,3 +17,4 @@ pub use defaults::{
 };
 pub use raw::RawOptions;
 pub use resolved::Options;
+pub use validate::validate_cli;

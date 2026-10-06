@@ -13,4 +13,7 @@ mod tests;
 
 pub use ui::{ansi, Ui};
 
-pub use render::{confirmation_text, print_commits, print_plan, GitSummary};
+pub use render::{
+    confirmation_text, print_commits, print_plan, print_retag, retag_confirmation, GitSummary,
+    RetagSummary,
+};

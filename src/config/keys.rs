@@ -101,6 +101,8 @@ pub(super) const KEYS: &[KeySpec] = &[
 /// from a file that lives in the repository.
 pub(super) const CLI_ONLY: &[&str] = &[
     "release",
+    "retag",
+    "retag-name",
     "current-version",
     "execute",
     "yes",

@@ -68,6 +68,14 @@ pub fn parse(args: &[String]) -> Result<Parsed> {
                     let level = parse_level(&value)?;
                     release_flag = Some((level, value));
                 }
+                "retag" => {
+                    // `--retag [tag]`: the value is optional, like `--tag`'s.
+                    let value = args.optional_value(name, inline)?;
+                    raw.retag = Some(true);
+                    if let Some(tag) = value {
+                        raw.retag_name = Some(tag);
+                    }
+                }
                 "preid" => raw.preid = args.value(name, inline)?,
                 "all" => set_boolean(&mut raw, "all", true)?,
                 "git-check" => set_boolean(&mut raw, "git-check", true)?,
@@ -203,6 +211,26 @@ mod tests {
             Parsed::Run(raw) => *raw,
             other => panic!("expected options, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn retag_takes_an_optional_tag_name() {
+        assert_eq!(run(&["--retag"]).retag, Some(true));
+        assert_eq!(run(&["--retag"]).retag_name, None);
+        assert_eq!(
+            run(&["--retag", "v1.2.3"]).retag_name.as_deref(),
+            Some("v1.2.3")
+        );
+        assert_eq!(
+            run(&["--retag=v1.2.3"]).retag_name.as_deref(),
+            Some("v1.2.3")
+        );
+        // like `--tag`, the optional value never swallows the next flag
+        let raw = run(&["--retag", "-y"]);
+        assert_eq!(raw.retag_name, None);
+        assert_eq!(raw.yes, Some(true));
+        // and it is not a boolean, so `--no-retag` is not a thing
+        assert!(parse_args(&["--no-retag"]).is_err());
     }
 
     #[test]
@@ -388,6 +416,7 @@ mod tests {
         let text = help();
         for option in [
             "--release",
+            "--retag",
             "--preid",
             "--all",
             "--git-check",

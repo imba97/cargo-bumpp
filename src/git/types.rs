@@ -29,4 +29,14 @@ impl Output {
     pub fn ok(&self) -> bool {
         self.code == 0
     }
+
+    /// What to report when the command failed: git's stderr, or its stdout when
+    /// stderr is empty — a rejected push says so on either.
+    pub fn failure_text(&self) -> String {
+        if self.stderr.trim().is_empty() {
+            self.stdout.trim().to_string()
+        } else {
+            self.stderr.trim().to_string()
+        }
+    }
 }

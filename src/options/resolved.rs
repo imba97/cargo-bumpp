@@ -19,6 +19,11 @@ pub struct Options {
     pub level: Level,
     /// True when the level must come from the interactive selector.
     pub release_from_prompt: bool,
+    /// `--retag`: re-release an existing tag instead of bumping anything. Nothing
+    /// else about a bump applies — no version, no file, no commit.
+    pub retag: bool,
+    /// The tag `--retag` re-releases; `None` means the most recent reachable one.
+    pub retag_name: Option<String>,
     pub preid: String,
     pub all: bool,
     pub git_check: bool,
@@ -59,6 +64,16 @@ impl Options {
     ///    off, unless `--tag` was asked for explicitly, which is a contradiction
     ///    and a usage error rather than a tag pointing at the *previous* commit.
     pub fn resolve(raw: RawOptions) -> Result<Options> {
+        // 0. A re-release is a git-only action, so a bump level next to it is a
+        //    contradiction rather than something to ignore.
+        let retag = raw.retag.unwrap_or(false);
+        if retag && raw.release.is_some() {
+            return Err(Error::usage(
+                "--retag re-releases an existing tag and cannot bump a version",
+            )
+            .with_hint("drop the level, or drop --retag to bump"));
+        }
+
         // 1. A deliberate "no commit" plus an explicit "tag" cannot both hold.
         if raw.commit == Some(false) && raw.tag == Some(true) {
             return Err(Error::usage("--no-commit and --tag cannot be combined").with_hint(
@@ -77,16 +92,17 @@ impl Options {
 
         // 4. push: explicit wins, otherwise on.
         let push_requested = raw.push.unwrap_or(true);
-        // 5. Nothing to push when neither a commit nor a tag will exist.
-        let push = push_requested && (commit || tag);
+        // 5. Nothing to push when neither a commit nor a tag will exist — a
+        //    re-release is nothing *but* a push, so the rule does not apply to it.
+        let push = push_requested && (retag || commit || tag);
 
         let mut notes = Vec::new();
-        if raw.commit == Some(false) && raw.tag.is_none() {
+        if !retag && raw.commit == Some(false) && raw.tag.is_none() {
             notes.push(
                 "--no-commit also disables tagging: a tag must point at a commit".to_string(),
             );
         }
-        if push_requested && !push {
+        if !retag && push_requested && !push {
             notes.push("nothing to push: no commit and no tag will be created".to_string());
         }
 
@@ -114,6 +130,8 @@ impl Options {
         Ok(Options {
             level,
             release_from_prompt,
+            retag,
+            retag_name: raw.retag_name,
             preid,
             all: raw.all.unwrap_or(false),
             git_check: raw.git_check.unwrap_or(true),
@@ -143,6 +161,6 @@ impl Options {
 
     /// True when any git step will run.
     pub fn touches_git(&self) -> bool {
-        self.commit || self.tag || self.push
+        self.retag || self.commit || self.tag || self.push
     }
 }

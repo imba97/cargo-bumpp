@@ -3,6 +3,8 @@
 //! Rendering is kept apart from the `Ui` sink so the wording and layout of a
 //! report can change without touching colour or quiet handling.
 
+use std::path::Path;
+
 use crate::git::display_path;
 use crate::plan::Plan;
 
@@ -23,6 +25,106 @@ impl GitSummary {
     pub fn will_push(&self) -> bool {
         self.push.is_some()
     }
+}
+
+/// What a `--retag` run will do, for its plan and its confirmation.
+#[derive(Debug, Clone, Default)]
+pub struct RetagSummary {
+    /// The tag being re-released.
+    pub tag: String,
+    /// The commit the tag points at now, as `1a2b3c4 subject`.
+    pub from: String,
+    /// The commit it will point at: HEAD, in the same shape.
+    pub to: String,
+    /// True when the tag is annotated, so it keeps its message.
+    pub annotated: bool,
+    /// `Some(remote)` when the tag will be force-pushed.
+    pub push: Option<String>,
+}
+
+impl RetagSummary {
+    /// True when re-releasing does not move the tag: the tag is already at HEAD,
+    /// which is the case a failed pipeline leaves behind.
+    fn stays_put(&self) -> bool {
+        self.from == self.to
+    }
+}
+
+/// Print what a `--retag` run will do: the tag, where it points now and where it
+/// will point, and whether it is pushed.
+pub fn print_retag(ui: &Ui, root: &Path, summary: &RetagSummary) {
+    if ui.quiet {
+        return;
+    }
+    let kind = if summary.annotated {
+        ui.dim("annotated, keeps its message")
+    } else {
+        ui.dim("lightweight")
+    };
+    println!("  {}  {}", ui.bold("bumpp"), root.display());
+    println!();
+    println!(
+        "  {}  {}  ({kind})",
+        ui.dim("  retag"),
+        ui.bold(&summary.tag)
+    );
+    if summary.stays_put() {
+        println!(
+            "  {}  {} {}",
+            ui.dim("     to"),
+            summary.to,
+            ui.bold_cyan("(HEAD, unchanged)")
+        );
+    } else {
+        println!("  {}  {}", ui.dim("   from"), summary.from);
+        println!(
+            "  {}  {} {}",
+            ui.dim("     to"),
+            summary.to,
+            ui.bold_cyan("(HEAD)")
+        );
+    }
+    match &summary.push {
+        Some(remote) => println!(
+            "  {}  {} {}",
+            ui.dim("   push"),
+            ui.dim("--force"),
+            ui.bold(format!("{remote} refs/tags/{}", summary.tag))
+        ),
+        None => println!("  {}  {}", ui.dim("   push"), ui.dim("no")),
+    }
+    println!();
+}
+
+/// The `Re-release?` block: the same facts, in the short shape the bump flow's
+/// confirmation uses.
+pub fn retag_confirmation(ui: &Ui, summary: &RetagSummary) -> String {
+    let kind = if summary.annotated {
+        "annotated"
+    } else {
+        "lightweight"
+    };
+    let mut text = String::new();
+    text.push_str(&format!("\n    retag {} ({kind})\n", ui.bold(&summary.tag)));
+    if summary.stays_put() {
+        text.push_str(&format!("       to {} (HEAD, unchanged)\n", summary.to));
+    } else {
+        text.push_str(&format!("     from {}\n", summary.from));
+        text.push_str(&format!(
+            "       to {} {}\n",
+            ui.bold_green(&summary.to),
+            ui.dim("(HEAD)")
+        ));
+    }
+    match &summary.push {
+        Some(remote) => text.push_str(&format!(
+            "     push {} force {} ({remote})\n",
+            ui.bold_cyan("yes"),
+            ui.bold(format!("refs/tags/{}", summary.tag))
+        )),
+        None => text.push_str("     push no (--no-push)\n"),
+    }
+    text
 }
 
 /// Print the plan: where it runs, what it bumps, and every line it touches.

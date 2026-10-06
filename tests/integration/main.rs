@@ -337,6 +337,7 @@ mod execute;
 mod flow;
 mod hooks;
 mod prompting;
+mod retag;
 mod templates;
 mod version_source;
 mod workspace_contract;

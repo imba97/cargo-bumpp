@@ -103,15 +103,11 @@ pub(super) fn apply(
 
 /// Push, keeping git's exit code and error text when it fails.
 fn push(git: &Git, remote: &str, refspec: &str) -> Result<()> {
-    let output = git.push(remote, refspec)?;
+    let output = git.push(remote, refspec, false)?;
     if output.ok() {
         return Ok(());
     }
-    let detail = if output.stderr.trim().is_empty() {
-        output.stdout.trim().to_string()
-    } else {
-        output.stderr.trim().to_string()
-    };
+    let detail = output.failure_text();
     let hint = format!(
         "The commit and the tag are local; nothing was rolled back.\nRetry the push with:\n  git push {remote} {refspec}\nTo start over instead:\n  git reset --hard HEAD~1\n  git tag --delete {}",
         refspec.rsplit('/').next().unwrap_or(refspec)

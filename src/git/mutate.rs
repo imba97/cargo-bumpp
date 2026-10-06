@@ -61,6 +61,36 @@ impl Git {
         self.run_args(args)
     }
 
+    /// `git tag --force [--annotate --message <msg>] [--sign] <name>`
+    ///
+    /// Re-creating is the point of `--retag`: an annotated tag is a new object
+    /// (its tagger date is part of it), so the later force-push moves the remote
+    /// ref and the release pipeline runs again. A tag that is already lightweight
+    /// stays lightweight, as `git tag -f <name> HEAD` would leave it.
+    pub fn force_tag(
+        &self,
+        name: &str,
+        message: Option<&str>,
+        sign: bool,
+        unsigned: bool,
+    ) -> Result<()> {
+        let mut args: Vec<String> = Vec::new();
+        push_gpgsign_override(&mut args, "tag", sign, unsigned);
+        args.extend(["tag".to_string(), "--force".to_string()]);
+        if let Some(message) = message {
+            args.extend([
+                "--annotate".to_string(),
+                "--message".to_string(),
+                message.to_string(),
+            ]);
+            if sign {
+                args.push("--sign".into());
+            }
+        }
+        args.push(name.to_string());
+        self.run_args(args)
+    }
+
     pub fn delete_tag(&self, name: &str) -> Result<()> {
         self.checked_quiet(&["tag", "--delete", name])
     }
@@ -69,9 +99,14 @@ impl Git {
         self.checked_quiet(&["reset", "--hard", revision])
     }
 
-    /// `git push <remote> <refspec>`, returning the raw output so a failure can
-    /// be reported verbatim with git's own exit code.
-    pub fn push(&self, remote: &str, refspec: &str) -> Result<Output> {
-        self.run(&["push", remote, refspec])
+    /// `git push [--force] <remote> <refspec>`, returning the raw output so a
+    /// failure can be reported verbatim with git's own exit code.
+    pub fn push(&self, remote: &str, refspec: &str, force: bool) -> Result<Output> {
+        let mut args = vec!["push"];
+        if force {
+            args.push("--force");
+        }
+        args.extend([remote, refspec]);
+        self.run(&args)
     }
 }

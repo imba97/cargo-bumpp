@@ -69,4 +69,38 @@ impl Git {
             Ok(output) if output.ok()
         )
     }
+
+    /// The object a tag name resolves to: the tag object itself for an annotated
+    /// tag, the commit for a lightweight one.
+    pub fn tag_object(&self, name: &str) -> Result<String> {
+        self.checked(&["rev-parse", &format!("refs/tags/{name}")])
+    }
+
+    /// The commit a tag points at, annotated tag or not.
+    pub fn tag_target(&self, name: &str) -> Result<String> {
+        self.checked(&["rev-list", "-n", "1", name])
+    }
+
+    /// True when the tag is an annotated one (a tag object of its own), as
+    /// opposed to a plain ref to a commit.
+    pub fn tag_is_annotated(&self, name: &str) -> Result<bool> {
+        let kind = self.checked(&["cat-file", "-t", &format!("refs/tags/{name}")])?;
+        Ok(kind.trim() == "tag")
+    }
+
+    /// The message of an annotated tag. A lightweight tag has none.
+    pub fn tag_message(&self, name: &str) -> Result<String> {
+        let text = self.checked(&[
+            "for-each-ref",
+            "--format=%(contents)",
+            &format!("refs/tags/{name}"),
+        ])?;
+        Ok(text.trim_end().to_string())
+    }
+
+    /// `1a2b3c4 the subject` — a commit as one line of a report.
+    pub fn commit_label(&self, revision: &str) -> Result<String> {
+        self.checked(&["log", "-1", "--format=%h %s", revision])
+            .map(|text| text.trim().to_string())
+    }
 }

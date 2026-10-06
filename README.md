@@ -45,6 +45,7 @@ $ cargo bumpp patch
 - [Install](#install)
 - [Quick start](#quick-start)
 - [What a default run does](#what-a-default-run-does)
+- [Re-releasing a tag](#re-releasing-a-tag)
 - [Options](#options)
 - [Signing (GPG)](#signing-gpg)
 - [Exit codes](#exit-codes)
@@ -110,6 +111,7 @@ cargo bumpp patch                  # skip the selector, bump patch
 cargo bumpp minor -y               # skip the confirmation too
 cargo bumpp 1.0.0 --no-push        # explicit version, stop at the tag and look first
 cargo bumpp conventional           # decide major/minor/patch from the commit log
+cargo bumpp --retag                # re-release the last tag: re-create it and force-push it
 cargo bumpp --preid rc --release prepatch
 cargo bumpp --no-tag --no-push     # only rewrite the version numbers
 ```
@@ -135,11 +137,59 @@ cannot be undone locally, and a rejected push is usually the remote saying no
 deleting local work. The commit and the tag stay, git's own error is printed
 verbatim, and the commands to retry are offered ready to copy.
 
+## Re-releasing a tag
+
+A pipeline that fails *after* the tag was pushed leaves a tag that cannot simply
+be pushed again: **git skips a ref that has not moved**, so the push does nothing
+and the pipeline never runs. `--retag` does what you would do by hand — re-create
+the tag, force-push it — behind the same plan and confirmation a bump gets:
+
+```console
+$ cargo bumpp --retag
+  bumpp  /path/to/project
+
+    retag  v0.3.2  (annotated, keeps its message)
+       to  1a2b3c4 chore: release v0.3.2 (HEAD, unchanged)
+     push  --force origin refs/tags/v0.3.2
+
+? Re-release? (Y/n) y
+  retag   v0.3.2
+  push    origin refs/tags/v0.3.2 (forced)
+```
+
+- **Which tag**: `--retag <tag>` names one. `--retag` on its own takes the most
+  recent tag reachable from HEAD — the same "last tag" that `conventional` reads
+  the commit range from. Having no tag at all, or naming one that is not in this
+  repository, is an error that says how to fix it (`git fetch --tags`).
+- **The tag is re-created, not just pushed.** An annotated tag keeps its message
+  and becomes a new tag object (its tagger date is part of it); a lightweight tag
+  is moved to HEAD, exactly as `git tag -f` would leave it. That new object is
+  what makes the force-push update the remote ref, which is what starts the
+  pipeline again.
+- **Nothing else happens.** No version is bumped, no file is written, no commit is
+  made, and the clean-tree rule does not apply — there is nothing to roll back. A
+  warning is printed when re-releasing moves the tag to a *different* commit than
+  the one it was released from.
+- **`--no-push`** re-creates the local tag only, and **`-y`** skips the
+  confirmation, as everywhere else. A rejected force-push (protected tag, no
+  permission) is not rolled back either: git's error and the retry command are
+  printed.
+- **The bump options do not apply**: `--retag` with `--commit`, `--tag`, `--all`,
+  `--recursive`, `--execute`, `--preid`, `--current-version`, `--commit-window`,
+  `--lockfile`, `--print-commits`, `--verify` or `--ignore-scripts` is a usage
+  error rather than an option that quietly does nothing. A `bumpp.toml` that
+  mentions them is fine — repository defaults are not an explicit request.
+- If the re-created tag comes out *identical* — an annotated tag re-created
+  within the same second — git reports nothing to push, and the run says so as a
+  note instead of pretending it pushed. A lightweight tag already at HEAD can
+  never be re-released this way, and the note names the delete-and-push that can.
+
 ## Options
 
 | Option | Default | What it does |
 | --- | --- | --- |
 | `--release <level>` | `prompt` | the level or version, instead of the positional argument |
+| `--retag [tag]` | last tag | re-release an existing tag: re-create it at HEAD and force-push it, see [Re-releasing a tag](#re-releasing-a-tag) |
 | `--preid <preid>` | `beta` | pre-release identifier |
 | `-a, --all` | `false` | `git add --all` and commit everything, not just the bumped files |
 | `--git-check` / `--no-git-check` | on | require a clean working tree |
@@ -440,6 +490,7 @@ implemented as written. Beyond those:
 | answering `n` at `Bump?` | exit code 1 | exit code 130 | cancelled at a prompt, per the exit code table |
 | `conventional` window | last tag to HEAD, uncapped | the same, but capped by `--commit-window`, saying so when it truncates | a window you can configure |
 | tag already exists | fails at the tag step, then rolls back | checked **before any file is written** | fail early rather than late |
+| a pipeline that failed after the tag was pushed | push the tag by hand, or delete and re-push it | `--retag` re-creates the tag and force-pushes it, after showing it | re-pushing an unmoved ref does nothing, so the tag has to be re-created for the pipeline to run again |
 | pushing the tag | `git push --tags` (every other local tag goes too) | `git push <remote> refs/tags/<tag>` | in a repo with a release workflow, pushing someone else's old tag can trigger an unexpected release |
 | extra options | — | `--lockfile`, `--commit-window`, `--no-sign`, `--no-print-commits`, `--no-all` | every boolean has a negated form, so a config file can be overridden for one run |
 

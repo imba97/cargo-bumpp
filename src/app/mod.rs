@@ -17,6 +17,7 @@
 
 mod conventional;
 mod execute;
+mod retag;
 mod rollback;
 mod summary;
 
@@ -29,7 +30,7 @@ use crate::cli::{self, Parsed};
 use crate::config;
 use crate::error::{Error, Result};
 use crate::git::Git;
-use crate::options::Options;
+use crate::options::{self, Options};
 use crate::plan;
 use crate::prompt::{self, Prompt, Selection, TerminalPrompt};
 use crate::report::{self, Ui};
@@ -58,6 +59,11 @@ pub fn run(args: &[String], cwd: &Path, injected: Option<&mut dyn Prompt>) -> Re
         }
         Parsed::Run(raw) => *raw,
     };
+
+    // Contradictions only the command line can express are checked here, before
+    // the environment and `bumpp.toml` are merged into these options: a
+    // repository's defaults must not turn a valid run into a usage error.
+    options::validate_cli(&raw)?;
 
     // The config file lives at the workspace root, so the workspace comes first.
     let workspace = Workspace::load(cwd)?;
@@ -96,7 +102,7 @@ pub fn run(args: &[String], cwd: &Path, injected: Option<&mut dyn Prompt>) -> Re
                 "the version numbers can still be bumped with --no-commit --no-tag --no-push",
             ));
         }
-        if options.git_check {
+        if options.git_check && !options.retag {
             let entries = git.status_porcelain()?;
             if !entries.is_empty() {
                 let mut hint = entries.join("\n");
@@ -104,6 +110,15 @@ pub fn run(args: &[String], cwd: &Path, injected: Option<&mut dyn Prompt>) -> Re
                 return Err(Error::check("Git working tree is not clean:").with_hint(hint));
             }
         }
+    }
+
+    // --------------------------------------------------------------- re-release
+    // `--retag` re-creates a tag that is already there and force-pushes it: a git
+    // action with a confirmation in front of it, so none of the version machinery
+    // below runs — no manifest is read beyond the workspace root, nothing is
+    // written, and there is no plan to roll back.
+    if options.retag {
+        return retag::run(&git, &workspace.root, &options, &ui, prompt);
     }
 
     // ------------------------------------------------------------------ version
@@ -181,7 +196,7 @@ pub fn run(args: &[String], cwd: &Path, injected: Option<&mut dyn Prompt>) -> Re
         );
     }
     if !options.yes {
-        if !prompt.confirm(&confirmation)? {
+        if !prompt.confirm(&confirmation, "Bump?")? {
             return Err(Error::cancelled());
         }
     } else {

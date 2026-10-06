@@ -163,7 +163,7 @@ impl Prompt for TerminalPrompt {
         self.select_with_numbers(current, choices)
     }
 
-    fn confirm(&mut self, summary: &str) -> Result<bool> {
+    fn confirm(&mut self, summary: &str, question: &str) -> Result<bool> {
         // `--quiet` hides everything else; the confirmation block is output
         // too, so it is hidden here as well.
         if !self.quiet {
@@ -174,7 +174,7 @@ impl Prompt for TerminalPrompt {
         }
         let mut attempts = Attempts::new(3);
         loop {
-            print!("? Bump? (Y/n) ");
+            print!("? {question} (Y/n) ");
             std::io::stdout().flush().ok();
             let Some(line) = read_line()? else {
                 return Err(Error::check(
@@ -188,7 +188,7 @@ impl Prompt for TerminalPrompt {
                 other => {
                     if !attempts.invalid() {
                         return Err(Error::usage(format!(
-                            "`{other}` is not an answer to `Bump?` (expected y or n)"
+                            "`{other}` is not an answer to `{question}` (expected y or n)"
                         )));
                     }
                     println!("  please answer `y` or `n`");

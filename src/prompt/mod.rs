@@ -39,8 +39,9 @@ pub trait Prompt {
     /// Pick a release. `current` is shown in the header.
     fn select_release(&mut self, current: &Version, choices: &[Choice]) -> Result<Selection>;
 
-    /// Ask `Bump?`. `false` means the user declined.
-    fn confirm(&mut self, summary: &str) -> Result<bool>;
+    /// Ask `question` (e.g. `Bump?`) about `summary`. `false` means the user
+    /// declined.
+    fn confirm(&mut self, summary: &str, question: &str) -> Result<bool>;
 }
 
 /// A prompt that refuses to ask: the honest answer when input or output is
@@ -57,7 +58,7 @@ impl Prompt for RefusePrompt {
         Err(prompt_unavailable())
     }
 
-    fn confirm(&mut self, summary: &str) -> Result<bool> {
+    fn confirm(&mut self, summary: &str, _question: &str) -> Result<bool> {
         // Print the summary anyway: it explains what the run would have done.
         println!("{summary}");
         Err(
@@ -100,7 +101,7 @@ impl Prompt for ScriptedPrompt {
         Ok(self.releases.remove(0))
     }
 
-    fn confirm(&mut self, _summary: &str) -> Result<bool> {
+    fn confirm(&mut self, _summary: &str, _question: &str) -> Result<bool> {
         if self.confirmations.is_empty() {
             return Ok(true);
         }
@@ -443,6 +444,6 @@ mod tests {
             prompt.select_release(&v("1.2.0"), &rows).unwrap(),
             Selection::Level(Level::Minor)
         );
-        assert!(!prompt.confirm("summary").unwrap());
+        assert!(!prompt.confirm("summary", "Bump?").unwrap());
     }
 }

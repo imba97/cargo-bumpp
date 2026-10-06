@@ -9,6 +9,10 @@ use crate::semver::Level;
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RawOptions {
     pub release: Option<Level>,
+    /// `--retag [name]`: true when the flag was given, whether or not it carried
+    /// a tag name.
+    pub retag: Option<bool>,
+    pub retag_name: Option<String>,
     pub preid: Option<String>,
     pub all: Option<bool>,
     pub git_check: Option<bool>,
@@ -43,6 +47,8 @@ impl RawOptions {
         }
         pick!(
             release,
+            retag,
+            retag_name,
             preid,
             all,
             git_check,

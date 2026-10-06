@@ -20,6 +20,8 @@ ARGS:
 
 OPTIONS:
       --release <level>       the level to bump by, instead of the positional argument
+      --retag [tag]           re-release an existing tag: re-create it at HEAD, force-push it
+                              [default tag: the most recent one reachable from HEAD]
       --preid <preid>         pre-release identifier [default: beta]
   -a, --all                   stage and commit every change, not just the bumped files
       --git-check             require a clean working tree [default: on]
@@ -50,6 +52,14 @@ OPTIONS:
 TEMPLATES (commit message and tag name):
   {{version}} {{oldVersion}} {{tag}} {{releaseType}} {{major}} {{minor}} {{patch}} {{date}}
   A template with no token and no `%s` gets the new version appended.
+
+RE-RELEASE (--retag):
+  Re-creates the tag at HEAD, then pushes it with --force. Re-creating is the
+  point: git skips a tag whose ref has not moved, so pushing it again would do
+  nothing; a new (annotated) tag object is a ref the push really updates. The tag
+  keeps its shape and message, and nothing is bumped, written or committed.
+  The tag is asked for unless the previous one is meant: the most recent tag
+  reachable from HEAD is the default.
 
 EXIT CODES:
   0 success, 1 check failed (rolled back), 2 usage error, 130 cancelled at a prompt.

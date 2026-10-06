@@ -43,6 +43,7 @@ $ cargo bumpp patch
 - [安装](#安装)
 - [快速开始](#快速开始)
 - [默认流程](#默认流程)
+- [重新发布 tag](#重新发布-tag)
 - [选项](#选项)
 - [签名（GPG）](#签名gpg)
 - [退出码](#退出码)
@@ -105,6 +106,7 @@ cargo bumpp patch                  # 跳过选择器，直接按 patch 升
 cargo bumpp minor -y               # 连确认也跳过
 cargo bumpp 1.0.0 --no-push        # 指定版本，只到 tag，先看一眼
 cargo bumpp conventional           # 按提交历史判断 major/minor/patch
+cargo bumpp --retag                # 重新发布上一个 tag：重建 tag 并强推
 cargo bumpp --preid rc --release prepatch
 cargo bumpp --no-tag --no-push     # 只改版本号
 ```
@@ -127,11 +129,47 @@ cargo bumpp --no-tag --no-push     # 只改版本号
 （受保护分支、非快进、无权限）—— 重试或修好再推，都比删掉本地成果合理。本地提交与 tag 保留，
 git 的报错原样打印，并给出可以直接照抄的重试命令。
 
+## 重新发布 tag
+
+tag 推上去之后流水线挂了，这个 tag 没法"再推一次"：**git 会跳过没有变化的 ref**，推送等于什么都没
+做，流水线也不会再跑。`--retag` 就是手动该做的那两步 —— 重建 tag、强推 —— 同样有摘要和确认：
+
+```console
+$ cargo bumpp --retag
+  bumpp  /path/to/project
+
+    retag  v0.3.2  (annotated, keeps its message)
+       to  1a2b3c4 chore: release v0.3.2 (HEAD, unchanged)
+     push  --force origin refs/tags/v0.3.2
+
+? Re-release? (Y/n) y
+  retag   v0.3.2
+  push    origin refs/tags/v0.3.2 (forced)
+```
+
+- **发布哪个**：`--retag <tag>` 用给定的 tag；不带参数就用**从 HEAD 可达的最近一个 tag** —— 和
+  `conventional` 读取提交范围的"上一个 tag"是同一个定义。一个 tag 都没有、或者给的 tag 不在本仓
+  库里，都会报错并给出修法（`git fetch --tags`）。
+- **是重建，不只是推送**：附注 tag 会保留原有附注信息，并生成一个新的 tag 对象（tagger 时间属于对象
+  内容）；轻量 tag 则和 `git tag -f` 一样移到 HEAD。正是这个新对象让强推真的更新远端 ref，流水线才
+  会重新跑。
+- **其它什么都不做**：不改版本号、不写文件、不提交，也不需要工作区干净 —— 没有东西要回滚。当这次
+  重新发布会把 tag 移到**另一个提交**上时，会明确警告。
+- **`--no-push`** 只重建本地 tag，**`-y`** 跳过确认，与其它命令一致。强推被拒（tag 受保护、无权限）
+  同样不回滚：打印 git 的报错和重试命令。
+- **升级相关的选项不适用**：`--retag` 与 `--commit`、`--tag`、`--all`、`--recursive`、`--execute`、
+  `--preid`、`--current-version`、`--commit-window`、`--lockfile`、`--print-commits`、`--verify`、
+  `--ignore-scripts` 同时给出是用法错误，而不是悄悄忽略。`bumpp.toml` 里写了这些没关系 —— 仓库默认
+  值不算"显式要求"。
+- 如果重建出来的 tag 对象**完全没变**（附注 tag 在同一秒内重建），git 会说无事可推，工具会明确提示，
+  而不是假装推过了。已经在 HEAD 上的轻量 tag 根本没法这样重发，提示里会给出"先删远端 tag 再推"的命令。
+
 ## 选项
 
 | 选项 | 默认 | 作用 |
 | --- | --- | --- |
 | `--release <level>` | `prompt` | 升级级别或版本号，替代位置参数 |
+| `--retag [tag]` | 上一个 tag | 重新发布已有 tag：重建后强推，见[重新发布 tag](#重新发布-tag) |
 | `--preid <preid>` | `beta` | 预发布标识 |
 | `-a, --all` | `false` | 连同其它改动一起 `git add --all` 并提交 |
 | `--git-check` / `--no-git-check` | 开 | 要求工作区干净 |
@@ -391,6 +429,7 @@ commit-message = "release: {version}"  # 换提交信息风格
 | 在 `Bump?` 处答 `n` | 退出码 1 | 退出码 130 | 按退出码表：在提示处取消 |
 | `conventional` 的窗口 | 上一个 tag 到 HEAD，无上限 | 同上，但受 `--commit-window` 限制并在截断时提示 | 窗口要能配置 |
 | tag 已存在 | 提交、打 tag 时才失败并回滚 | **写文件之前**就检查并报错 | 能早失败就不要晚失败 |
+| tag 推上去之后流水线挂了 | 只能手动推、或者删掉远端 tag 再推 | `--retag` 先展示 tag，再重建并强推 | 没动过的 ref 推了等于没推，必须重建 tag 流水线才会再跑 |
 | 推 tag | `git push --tags`（其它本地 tag 也一起推走） | `git push <remote> refs/tags/<tag>` | 在跑发布 workflow 的仓库里，推走别人的旧 tag 会触发一次意外发布 |
 | 新增选项 | — | `--lockfile`、`--commit-window`、`--no-sign`、`--no-print-commits`、`--no-all` | 每个布尔开关都有否定形式，方便临时覆盖配置文件 |
 
