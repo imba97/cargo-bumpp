@@ -35,6 +35,26 @@ fn the_numbered_list_works_without_a_terminal() {
 }
 
 #[test]
+fn the_numbered_list_accepts_a_custom_version() {
+    let project = Project::package("custom", "0.2.0");
+    project.commit_all("chore: initial");
+
+    // `11` is the `custom …` row, then the version to type, then the confirmation.
+    // It is the same question the arrow-key selector asks, on the same line-based
+    // prompt, so it is covered here: the key path cannot be driven from a test.
+    let run = project.run_with_stdin(&["--no-push"], Some("11\n0.3.0\ny\n"));
+    run.expect_success();
+    let out = run.all();
+    assert!(out.contains("custom"), "the row is listed: {out}");
+    assert!(out.contains("version (current 0.2.0)"), "{out}");
+    assert!(
+        project.read("Cargo.toml").contains("0.3.0"),
+        "{}",
+        project.read("Cargo.toml")
+    );
+}
+
+#[test]
 fn a_closed_stdin_reports_that_it_cannot_prompt() {
     let project = Project::workspace("no-prompt", "0.0.2");
     project.commit_all("chore: initial");

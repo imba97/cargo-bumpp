@@ -9,12 +9,31 @@
 use std::io::Write;
 
 use super::choice::{match_choice, Choice, Selection};
-use super::keys::{read_key, read_line, Key};
+use super::keys::{read_key, read_line, read_typed_line, Key};
 use super::{prompt_unavailable, Attempts, Prompt};
 use crate::error::{Error, Result};
 use crate::report::ansi;
 use crate::semver::Version;
 use crate::sys;
+
+/// What picking a row decided.
+///
+/// The `custom …` row cannot answer itself where the key loop reads it: that loop
+/// runs with the terminal in single-key mode, where the console neither echoes
+/// what is typed nor assembles it into a line. Restoring line mode before asking
+/// is not a way out either — a console switched to single-key mode is not
+/// guaranteed to go back to line input (a pseudoconsole keeps handing over raw
+/// bytes), and then Enter and Ctrl+C are swallowed. So the row hands the question
+/// back as a value, and [`TerminalPrompt::select_release`] asks it with
+/// `read_typed_line`, which does its own echoing — which is also why this is an
+/// enum rather than an `Option` with a second meaning.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Answer {
+    /// A row was picked: that is the whole answer.
+    Picked(Selection),
+    /// The `custom …` row: a version still has to be typed in.
+    Custom,
+}
 
 /// The real thing: keys on a terminal, lines when there is no terminal.
 pub struct TerminalPrompt {
@@ -123,7 +142,19 @@ impl Prompt for TerminalPrompt {
         // used when `color` is on (which is what enabling ANSI output reports).
         if self.color && sys::stdin_is_tty() && sys::stdout_is_tty() {
             if let Some(raw) = sys::RawMode::enable() {
-                let result = self.select_with_keys(current, choices);
+                let answer = self.select_with_keys(current, choices);
+                // The `custom …` row is answered with the terminal still in
+                // single-key mode: the prompt echoes and edits the version itself
+                // (`read_typed_line`), so nothing here depends on the console
+                // going back to line input. The mode is only left behind once the
+                // whole question has been answered.
+                let result = match answer {
+                    Ok(Answer::Picked(selection)) => Ok(selection),
+                    Ok(Answer::Custom) => {
+                        ask_version_in_key_mode(current).and_then(custom_selection)
+                    }
+                    Err(err) => Err(err),
+                };
                 drop(raw);
                 println!();
                 return result;
@@ -172,7 +203,7 @@ impl TerminalPrompt {
         &mut self,
         current: &Version,
         choices: &[Choice],
-    ) -> Result<Selection> {
+    ) -> Result<Answer> {
         if choices.is_empty() {
             return Err(Error::check("there is nothing to choose from"));
         }
@@ -195,52 +226,52 @@ impl TerminalPrompt {
                     if index < choices.len() {
                         cursor = index;
                     }
-                    if let Some(selection) = self.finish(current, choices, cursor, drawn)? {
-                        return Ok(selection);
-                    }
-                    drawn = 0;
+                    return self.finish(current, choices, cursor, drawn);
                 }
-                Key::Enter => {
-                    if let Some(selection) = self.finish(current, choices, cursor, drawn)? {
-                        return Ok(selection);
-                    }
-                    drawn = 0;
-                }
+                // Either a row is picked and the menu is over, or the custom row
+                // asks for a version — which `select_release` asks on this same
+                // single-key prompt. Both end the loop.
+                Key::Enter => return self.finish(current, choices, cursor, drawn),
                 Key::Escape | Key::Interrupt => return Err(Error::cancelled()),
                 _ => {}
             }
         }
     }
 
-    /// Enter was pressed: either a row is picked, or `custom …` asks for a
-    /// version.
+    /// Enter was pressed: either a row is picked, or the `custom …` row asks for
+    /// a version.
+    ///
+    /// The asking is *not* done here: [`Answer::Custom`] is handed back to
+    /// [`Prompt::select_release`], which asks on the single-key prompt that can
+    /// actually read it. Reading a whole line in this mode — what this used to do
+    /// — is what made the prompt swallow what was typed, ignore Enter and never
+    /// cancel.
     pub(super) fn finish(
         &mut self,
         current: &Version,
         choices: &[Choice],
         cursor: usize,
         drawn: usize,
-    ) -> Result<Option<Selection>> {
+    ) -> Result<Answer> {
         let choice = &choices[cursor];
-        if let Some(version) = &choice.version {
-            self.clear_menu(drawn);
-            // The picked row keeps the highlight, so the answer is easy to spot.
-            println!(
-                "? Current version {} » {}",
-                self.paint("32", &current.to_string()),
-                self.paint("1;36", &format!("{} {version}", choice.label))
-            );
-            return Ok(Some(Selection::Level(choice.level.clone())));
-        }
-
         self.clear_menu(drawn);
-        println!(
-            "? Current version {} » custom",
-            self.paint("32", &current.to_string())
-        );
-        match ask_version(current)? {
-            Some(version) => Ok(Some(Selection::Version(version))),
-            None => Err(Error::cancelled()),
+        match &choice.version {
+            Some(version) => {
+                // The picked row keeps the highlight, so the answer is easy to spot.
+                println!(
+                    "? Current version {} » {}",
+                    self.paint("32", &current.to_string()),
+                    self.paint("1;36", &format!("{} {version}", choice.label))
+                );
+                Ok(Answer::Picked(Selection::Level(choice.level.clone())))
+            }
+            None => {
+                println!(
+                    "? Current version {} » custom",
+                    self.paint("32", &current.to_string())
+                );
+                Ok(Answer::Custom)
+            }
         }
     }
 
@@ -365,10 +396,7 @@ impl TerminalPrompt {
             match match_choice(choices, text) {
                 Some(index) => {
                     if choices[index].is_custom() {
-                        return match ask_version(current)? {
-                            Some(version) => Ok(Selection::Version(version)),
-                            None => Err(Error::cancelled()),
-                        };
+                        return ask_version(current).and_then(custom_selection);
                     }
                     return Ok(Selection::Level(choices[index].level.clone()));
                 }
@@ -398,18 +426,43 @@ fn push_line(out: &mut String, clear: bool, text: &str) {
     out.push('\n');
 }
 
-/// Ask for a version by hand, validating it like the reference does.
+/// The `custom …` row: the version it asks for, or a cancellation.
+fn custom_selection(version: Option<Version>) -> Result<Selection> {
+    match version {
+        Some(version) => Ok(Selection::Version(version)),
+        None => Err(Error::cancelled()),
+    }
+}
+
+/// Ask for the version on the numbered list's line-based prompt.
 fn ask_version(current: &Version) -> Result<Option<Version>> {
+    ask_version_with(current, read_line)
+}
+
+/// Ask for the version while the terminal is in single-key mode: the reader does
+/// the echoing and the editing, so both prompts only share the question.
+fn ask_version_in_key_mode(current: &Version) -> Result<Option<Version>> {
+    ask_version_with(current, read_typed_line)
+}
+
+/// Ask for a version by hand, validating it like the reference does.
+///
+/// Three tries, then a usage error — and an empty answer, a closed input or Ctrl+C
+/// all mean the same thing: nothing was chosen.
+fn ask_version_with(
+    current: &Version,
+    read: impl Fn() -> Result<Option<String>>,
+) -> Result<Option<Version>> {
     let mut attempts = Attempts::new(3);
     loop {
         print!("  version (current {current}) > ");
         std::io::stdout().flush().ok();
-        let Some(line) = read_line()? else {
+        let Some(line) = read()? else {
             return Ok(None);
         };
         let text = line.trim();
         if text.is_empty() {
-            return Err(Error::cancelled());
+            return Ok(None);
         }
         match Version::parse_lenient(text) {
             Ok(version) => return Ok(Some(version)),

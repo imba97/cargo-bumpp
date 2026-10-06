@@ -283,6 +283,11 @@ Eleven rows, in bumpp's order. Note that the second `conventional` row is really
 
 - **Keys**: `↑`/`↓` or `j`/`k` to move, `g`/`G` for the ends, a digit to jump to
   a row, `Enter` to pick, `Ctrl+C` to cancel.
+- **The `custom …` row** asks for the version on the same single-key prompt the
+  menu uses: the tool echoes what you type itself (a console in that mode neither
+  echoes nor assembles lines), `Backspace` corrects it, `Enter` finishes it and
+  `Ctrl+C` cancels the run — nothing has been written at that point. Versions are
+  ASCII, so any other character is ignored rather than echoed.
 - **Highlighting**: the row under the cursor is bold cyan, the rest is dimmed.
   Colour is only used when escape sequences can actually be written — redirected
   output, a `cmd.exe` without ANSI support, or `--quiet` all drop it, so a pipe

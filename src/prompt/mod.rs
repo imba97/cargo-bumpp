@@ -25,7 +25,7 @@ pub use choice::{choices, resolve_level};
 pub use choice::{Choice, Selection};
 pub use select::TerminalPrompt;
 #[cfg(test)]
-pub(super) use select::{Window, DEFAULT_ROW};
+pub(super) use select::{Answer, Window, DEFAULT_ROW};
 
 /// How the tool asks its questions. Implement it to drive the tool from a
 /// library or a test.
@@ -282,8 +282,23 @@ mod tests {
         let mut prompt = TerminalPrompt::new(true, false, false);
         let rows = choices(&v("1.2.0"), "beta", Level::Patch);
         // `finish` prints and returns; the level it hands back is the row's
-        let selection = prompt.finish(&v("1.2.0"), &rows, 3, 0).unwrap();
-        assert_eq!(selection, Some(Selection::Level(Level::Next)));
+        let answer = prompt.finish(&v("1.2.0"), &rows, 3, 0).unwrap();
+        assert_eq!(answer, Answer::Picked(Selection::Level(Level::Next)));
+    }
+
+    #[test]
+    fn the_custom_row_hands_the_question_back() {
+        let mut prompt = TerminalPrompt::new(false, false, false);
+        let rows = choices(&v("1.2.0"), "beta", Level::Patch);
+        // The last row is `custom …`. Picking it must come back as a request for a
+        // version instead of reading one here: the key loop runs with the console
+        // in single-key mode, and this test only completes because nothing reads
+        // stdin from it. `select_release` asks on that same single-key prompt,
+        // with the echoing reader in `keys::read_typed_line`.
+        let answer = prompt
+            .finish(&v("1.2.0"), &rows, rows.len() - 1, 0)
+            .unwrap();
+        assert_eq!(answer, Answer::Custom);
     }
 
     #[test]
