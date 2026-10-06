@@ -21,7 +21,7 @@ ARGS:
 OPTIONS:
       --release <level>       the level to bump by, instead of the positional argument
       --retag [tag]           re-release an existing tag: re-create it at HEAD, force-push it
-                              [default tag: the most recent one, when it is already at HEAD]
+                              [default tag: the most recent one reachable from HEAD]
       --preid <preid>         pre-release identifier [default: beta]
   -a, --all                   stage and commit every change, not just the bumped files
       --git-check             require a clean working tree [default: on]
@@ -58,9 +58,9 @@ RE-RELEASE (--retag):
   point: git skips a tag whose ref has not moved, so pushing it again would do
   nothing; a new (annotated) tag object is a ref the push really updates. The tag
   keeps its shape and message, and nothing is bumped, written or committed.
-  A tag name is optional: without one the most recent tag is re-released, but only
-  when it already points at HEAD. HEAD having moved past a release means the tag
-  would land on unreleased commits, so that move has to be asked for by name.
+  A tag name is optional: without one, the most recent tag reachable from HEAD is
+  the one re-released, and it is moved onto HEAD — shown first, with a warning when
+  that changes the commit it points at, and confirmed before anything is pushed.
 
 EXIT CODES:
   0 success, 1 check failed (rolled back), 2 usage error, 130 cancelled at a prompt.

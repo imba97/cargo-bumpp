@@ -163,35 +163,36 @@ fn declining_changes_nothing() {
 }
 
 #[test]
-fn the_default_tag_must_already_be_at_head() {
+fn the_default_tag_is_moved_to_head_when_head_has_moved_on() {
     let project = released("retag-moved-on", "v0.3.0");
-    // HEAD moves past the release: re-releasing by default would silently
-    // re-point a published version at unreleased code.
+    // HEAD has moved past the release: the most recent tag is still the one a
+    // re-release means, and the move is what the confirmation is about.
+    project.write("src/main.rs", "fn main() { println!(\"later\"); }\n");
+    project.git(&["commit", "--all", "--message", "feat: later work"]);
+
+    let run = project.run(&["--retag", "-y", "--no-push"]);
+    run.expect_success();
+    let out = run.all();
+    assert!(out.contains("re-releasing moves it to HEAD"), "{out}");
+    assert_eq!(
+        project.git(&["rev-parse", "v0.3.0^{commit}"]),
+        project.git(&["rev-parse", "HEAD"]),
+        "the most recent tag was moved onto HEAD"
+    );
+
+    // Declining the confirmation leaves the tag where it was.
+    let project = released("retag-moved-on-declined", "v0.3.0");
     project.write("src/main.rs", "fn main() { println!(\"later\"); }\n");
     project.git(&["commit", "--all", "--message", "feat: later work"]);
     let tag_object = project.git(&["rev-parse", "v0.3.0"]);
 
-    let run = project.run(&["--retag", "-y"]);
-    run.expect_code(1);
-    let out = run.all();
-    assert!(out.contains("not at HEAD"), "{out}");
-    assert!(
-        out.contains("--retag v0.3.0"),
-        "the hint names the tag: {out}"
-    );
+    let run = project.run_with_stdin(&["--retag", "--no-push"], Some("n\n"));
+    run.expect_code(130);
+    assert!(run.all().contains("Re-release?"), "{}", run.all());
     assert_eq!(
         project.git(&["rev-parse", "v0.3.0"]),
         tag_object,
         "the tag was not moved"
-    );
-
-    // Naming it is the explicit way to say the move is meant.
-    project
-        .run(&["--retag", "v0.3.0", "-y", "--no-push"])
-        .expect_success();
-    assert_eq!(
-        project.git(&["rev-parse", "v0.3.0^{commit}"]),
-        project.git(&["rev-parse", "HEAD"])
     );
 }
 
